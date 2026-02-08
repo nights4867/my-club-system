@@ -42,7 +42,7 @@ def load_registrations():
 reg_df = load_registrations()
 
 # --- 2. 介面與狀態初始化 ---
-st.set_page_config(page_title="頂級社團報名系統 V14.7", page_icon="💎", layout="centered")
+st.set_page_config(page_title="頂級社團報名系統 V14.9", page_icon="💎", layout="centered")
 
 if "current_page" not in st.session_state: st.session_state.current_page = "📝 學生報名"
 if "id_verified" not in st.session_state: st.session_state.id_verified = False
@@ -146,12 +146,30 @@ if st.session_state.current_page == "🛠️ 管理員後台":
         
         with t1:
             st.write("### 📈 報名狀況即時統計")
-            if not reg_df.empty:
+            
+            # 重新讀取確保最新
+            latest_df = load_registrations()
+            
+            if not latest_df.empty:
                 m1, m2, m3 = st.columns(3)
-                m1.metric("總收件數", f"{len(reg_df)} 份")
-                m2.metric("正取人數", f"{len(reg_df[reg_df['狀態'] == '正取'])} 人")
-                m3.metric("候補人數", f"{len(reg_df[reg_df['狀態'] == '備取'])} 人")
-                st.bar_chart(reg_df['社團'].value_counts())
+                m1.metric("總收件數", f"{len(latest_df)} 份")
+                m2.metric("正取人數", f"{len(latest_df[latest_df['狀態'] == '正取'])} 人")
+                m3.metric("候補人數", f"{len(latest_df[latest_df['狀態'] == '備取'])} 人")
+                
+                st.divider()
+                st.write("#### 📊 各社團報名長條圖")
+                st.bar_chart(latest_df['社團'].value_counts())
+                
+                st.divider()
+                st.write("#### 📋 各社團詳細錄取名單")
+                clubs_list = sorted(latest_df["社團"].unique())
+                
+                if clubs_list:
+                    tabs = st.tabs([f"📌 {c}" for c in clubs_list])
+                    for i, club in enumerate(clubs_list):
+                        with tabs[i]:
+                            subset = latest_df[latest_df["社團"] == club].sort_values(by="狀態", ascending=False)
+                            st.dataframe(subset, use_container_width=True, hide_index=True)
             else:
                 st.info("目前尚未有任何報名數據。")
 
@@ -205,7 +223,7 @@ if st.session_state.current_page == "🛠️ 管理員後台":
                 confirm_clear_data()
 
 # ----------------------------------------------------------------
-# 【二、學生報名】
+# 【二、學生報名】 - [V14.9 新增：局部即時刷新]
 # ----------------------------------------------------------------
 elif st.session_state.current_page == "📝 學生報名":
     now = get_taiwan_now()
@@ -259,14 +277,32 @@ elif st.session_state.current_page == "📝 學生報名":
                     st.divider()
                     st.write("### 🎯 4️⃣ 選擇社團")
                     
-                    for club_n, cfg in config_data["clubs"].items():
-                        c_reg = len(reg_df[reg_df["社團"] == club_n])
-                        c_lim = cfg["limit"]
-                        prog = min(c_reg / c_lim, 1.0) if c_lim > 0 else 1.0
-                        label = f"{club_n} (正取已收 {c_reg}/{c_lim})"
-                        st.progress(prog, text=label)
+                    # === 關鍵修改：使用 @st.fragment 來自動刷新這個區塊 ===
+                    @st.fragment(run_every=3)  # 每 3 秒刷新一次此函數內的內容
+                    def show_live_quota_bars():
+                        # 重要：在 fragment 內重新讀取資料，才能拿到最新名額
+                        live_df = load_registrations()
+                        
+                        st.caption("⚡ 名額即時更新中 (每 3 秒刷新)...")
+                        
+                        for club_n, cfg in config_data["clubs"].items():
+                            c_reg = len(live_df[live_df["社團"] == club_n])
+                            c_lim = cfg["limit"]
+                            prog = min(c_reg / c_lim, 1.0) if c_lim > 0 else 1.0
+                            label = f"{club_n} (正取已收 {c_reg}/{c_lim})"
+                            
+                            # 滿額顯示紅色 (用文字標示)
+                            if c_reg >= c_lim:
+                                label += " 🈵"
+                            
+                            st.progress(prog, text=label)
+
+                    # 呼叫這個自動刷新的函數
+                    show_live_quota_bars()
                     
+                    # === 下面是選擇區，故意不放在 fragment 內，以免學生選到一半被重整刷掉 ===
                     avail_options = []
+                    # 這裡用原本的 reg_df 做選項即可，因為真正按下去時會有「雙重檢查」擋住
                     for club_n, cfg in config_data["clubs"].items():
                         c_reg = len(reg_df[reg_df["社團"] == club_n])
                         if c_reg < (cfg["limit"] + cfg["wait_limit"]): 
@@ -282,34 +318,6 @@ elif st.session_state.current_page == "📝 學生報名":
                                 confirm_submission(sel_class, sel_seat, student_row['姓名'], real_c)
                     else:
                         st.error("😭 很抱歉，所有名額已搶購一空。")
-
-    # --- [V14.7 新增] 即時錄取榜單 ---
-    st.divider()
-    st.write("### 🏆 各社團即時錄取名單")
-    
-    # 重新讀取確保是最新資料
-    latest_df = load_registrations()
-    
-    if not latest_df.empty:
-        # 簡單的隱私處理：名字中間變 O (如果需要全名，請把 lambda 那行刪掉)
-        display_df = latest_df.copy()
-        display_df["姓名"] = display_df["姓名"].apply(lambda n: n[0] + "O" + n[-1] if len(n) == 3 else n[0] + "O") 
-        
-        # 整理顯示欄位
-        display_df = display_df[["社團", "班級", "座號", "姓名", "狀態"]]
-        
-        # 依照社團分組顯示
-        clubs_list = sorted(display_df["社團"].unique())
-        
-        # 使用 Tabs 分頁顯示各社團名單
-        tabs = st.tabs([f"📌 {c}" for c in clubs_list])
-        
-        for i, club in enumerate(clubs_list):
-            with tabs[i]:
-                subset = display_df[display_df["社團"] == club].sort_values(by="狀態", ascending=False) # 正取排前面
-                st.dataframe(subset, use_container_width=True, hide_index=True)
-    else:
-        st.info("🥚 目前尚未有人上榜，快來搶頭香！")
 
 # ----------------------------------------------------------------
 # 【三、查詢報名】
