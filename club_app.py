@@ -42,16 +42,15 @@ def load_registrations():
 reg_df = load_registrations()
 
 # --- 2. 介面與狀態初始化 ---
-st.set_page_config(page_title="頂級社團報名系統 V14.5", page_icon="💎", layout="centered")
+st.set_page_config(page_title="頂級社團報名系統 V14.7", page_icon="💎", layout="centered")
 
 if "current_page" not in st.session_state: st.session_state.current_page = "📝 學生報名"
 if "id_verified" not in st.session_state: st.session_state.id_verified = False
 if "last_student" not in st.session_state: st.session_state.last_student = ""
 
-# --- 3. [優化：確認彈窗 - 加入雙重檢查] ---
+# --- 3. [優化：確認彈窗 - V14.6 嚴格檢查版] ---
 @st.dialog("📋 報名資訊最後確認")
 def confirm_submission(sel_class, sel_seat, name, club):
-    # 注意：這裡不先傳入 status，因為要在最後一刻才計算
     st.write(f"親愛的 **{name}** 同學：")
     st.markdown(f"""
     > **您的報名內容如下：**
@@ -63,8 +62,7 @@ def confirm_submission(sel_class, sel_seat, name, club):
     st.warning("請確認以上資訊無誤，送出後無法自行修改。")
     
     if st.button("✅ 我確認無誤，送出報名", use_container_width=True, type="primary"):
-        # === 關鍵修改：雙重檢查機制 (Double Check) ===
-        # 1. 重新讀取最新的檔案狀態 (避免多人同時寫入)
+        # 1. 重新讀取最新的檔案狀態
         current_df = load_registrations()
         
         # 2. 檢查是否重複報名
@@ -74,14 +72,25 @@ def confirm_submission(sel_class, sel_seat, name, club):
             st.rerun()
             return
 
-        # 3. 重新計算名額狀態
-        club_limit = config_data["clubs"][club]["limit"]
+        # 3. 嚴格名額檢查
+        club_config = config_data["clubs"][club]
+        limit = club_config["limit"]
+        wait_limit = club_config["wait_limit"]
+        total_limit = limit + wait_limit
+
         current_count = len(current_df[current_df["社團"] == club])
         
-        # 4. 判定最終狀態
-        final_status = "正取" if current_count < club_limit else "備取"
+        if current_count >= total_limit:
+            st.error(f"😭 來晚了一步！【{club}】剛剛瞬間額滿了。")
+            st.error("❌ 報名失敗，請關閉視窗後重新選擇其他社團。")
+            return 
+
+        elif current_count < limit:
+            final_status = "正取"
+        else:
+            final_status = "備取"
         
-        # 5. 寫入資料
+        # 寫入
         new_row = pd.DataFrame({
             "班級": [sel_class], "座號": [sel_seat], "姓名": [name],
             "社團": [club], "報名時間": [get_taiwan_now().strftime('%Y-%m-%d %H:%M:%S')],
@@ -89,7 +98,6 @@ def confirm_submission(sel_class, sel_seat, name, club):
         })
         new_row.to_csv(REG_FILE, mode='a', index=False, header=not os.path.exists(REG_FILE), encoding="utf-8-sig")
         
-        # 6. 顯示結果
         if final_status == "正取":
             st.success(f"🎊 恭喜！您已成功搶到【正取】名額！")
         else:
@@ -261,8 +269,8 @@ elif st.session_state.current_page == "📝 學生報名":
                     avail_options = []
                     for club_n, cfg in config_data["clubs"].items():
                         c_reg = len(reg_df[reg_df["社團"] == club_n])
-                        if c_reg < cfg["limit"]: avail_options.append(f"{club_n}") # 簡化顯示
-                        elif c_reg < (cfg["limit"] + cfg["wait_limit"]): avail_options.append(f"{club_n}")
+                        if c_reg < (cfg["limit"] + cfg["wait_limit"]): 
+                            avail_options.append(f"{club_n}")
                     
                     if avail_options:
                         choice = st.radio("可選社團：", avail_options, horizontal=True, label_visibility="collapsed")
@@ -270,10 +278,38 @@ elif st.session_state.current_page == "📝 學生報名":
                             if not reg_df[(reg_df["班級"] == sel_class) & (reg_df["座號"] == sel_seat)].empty:
                                 st.warning("⚠️ 您已經有報名紀錄，請勿重複提交。")
                             else:
-                                real_c = choice # 因為簡化顯示，名稱即是選項
+                                real_c = choice
                                 confirm_submission(sel_class, sel_seat, student_row['姓名'], real_c)
                     else:
                         st.error("😭 很抱歉，所有名額已搶購一空。")
+
+    # --- [V14.7 新增] 即時錄取榜單 ---
+    st.divider()
+    st.write("### 🏆 各社團即時錄取名單")
+    
+    # 重新讀取確保是最新資料
+    latest_df = load_registrations()
+    
+    if not latest_df.empty:
+        # 簡單的隱私處理：名字中間變 O (如果需要全名，請把 lambda 那行刪掉)
+        display_df = latest_df.copy()
+        display_df["姓名"] = display_df["姓名"].apply(lambda n: n[0] + "O" + n[-1] if len(n) == 3 else n[0] + "O") 
+        
+        # 整理顯示欄位
+        display_df = display_df[["社團", "班級", "座號", "姓名", "狀態"]]
+        
+        # 依照社團分組顯示
+        clubs_list = sorted(display_df["社團"].unique())
+        
+        # 使用 Tabs 分頁顯示各社團名單
+        tabs = st.tabs([f"📌 {c}" for c in clubs_list])
+        
+        for i, club in enumerate(clubs_list):
+            with tabs[i]:
+                subset = display_df[display_df["社團"] == club].sort_values(by="狀態", ascending=False) # 正取排前面
+                st.dataframe(subset, use_container_width=True, hide_index=True)
+    else:
+        st.info("🥚 目前尚未有人上榜，快來搶頭香！")
 
 # ----------------------------------------------------------------
 # 【三、查詢報名】
