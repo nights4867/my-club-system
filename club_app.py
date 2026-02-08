@@ -6,25 +6,21 @@ import time
 from datetime import datetime
 import pytz 
 
-# --- 1. 檔案路徑與基本設定 ---
+# --- 1. 基本設定 ---
 CONFIG_FILE = r"club_config.json"
 REG_FILE = r"club_registrations.csv"
 STUDENT_LIST_FILE = r"students.xlsx"
 
-# --- 2. 核心：強制台灣時間函式 ---
 def get_taiwan_now():
     tw_tz = pytz.timezone('Asia/Taipei')
     return datetime.now(tw_tz).replace(tzinfo=None)
 
-# --- 3. 核心：設定檔讀寫 ---
 def load_config():
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            config = json.load(f)
-            if "admin_password" not in config: config["admin_password"] = "admin"
-            return config
+            return json.load(f)
     return {
-        "clubs": {"程式設計社": {"limit": 3, "wait_limit": 2}},
+        "clubs": {"桌球社": {"limit": 10, "wait_limit": 5}},
         "start_time": "2026-02-09 08:00:00",
         "end_time": "2026-02-09 17:00:00",
         "admin_password": "admin"
@@ -42,187 +38,182 @@ if os.path.exists(REG_FILE):
 else:
     reg_df = pd.DataFrame(columns=["班級", "座號", "姓名", "社團", "報名時間", "狀態"])
 
-# --- 4. 初始化頁面狀態 ---
-if "current_page" not in st.session_state:
-    st.session_state.current_page = "📝 學生報名"
+# --- 2. 介面與狀態初始化 ---
+st.set_page_config(page_title="社團報名系統 V12.1", page_icon="🏫", layout="centered")
 
-# ----------------------------------------------------------------
-# 【主畫面標題與導覽按鈕】
-# ----------------------------------------------------------------
-st.set_page_config(page_title="社團管理系統", page_icon="🏫", layout="centered")
+# 初始化 Session State
+if "current_page" not in st.session_state: st.session_state.current_page = "📝 學生報名"
+if "id_verified" not in st.session_state: st.session_state.id_verified = False
+if "last_student" not in st.session_state: st.session_state.last_student = ""
 
 st.title("🏫 社團線上報名系統")
 
-# 在標題下方建立三個導覽按鈕
+# 導覽按鈕
 nav_col1, nav_col2, nav_col3 = st.columns(3)
+if nav_col1.button("📝 學生報名", use_container_width=True): 
+    st.session_state.current_page = "📝 學生報名"; st.rerun()
+if nav_col2.button("🔍 查詢報名", use_container_width=True): 
+    st.session_state.current_page = "🔍 查詢報名"; st.rerun()
+if nav_col3.button("🛠️ 管理員後台", use_container_width=True): 
+    st.session_state.current_page = "🛠️ 管理員後台"; st.rerun()
 
-if nav_col1.button("📝 學生報名", use_container_width=True):
-    st.session_state.current_page = "📝 學生報名"
-if nav_col2.button("🔍 查詢報名", use_container_width=True):
-    st.session_state.current_page = "🔍 查詢報名"
-if nav_col3.button("🛠️ 管理員後台", use_container_width=True):
-    st.session_state.current_page = "🛠️ 管理員後台"
-
-st.divider() # 分隔線，下方顯示功能內容
+st.divider()
 
 # ----------------------------------------------------------------
-# 【分頁邏輯顯示】
+# 【一、管理員後台】
 # ----------------------------------------------------------------
-
-mode = st.session_state.current_page
-
-# --- 功能一：管理員後台 ---
-if mode == "🛠️ 管理員後台":
-    st.subheader("🛠️ 管理員安全後台")
+if st.session_state.current_page == "🛠️ 管理員後台":
+    st.subheader("🛠️ 管理員後台")
     if "is_admin" not in st.session_state: st.session_state.is_admin = False
 
     if not st.session_state.is_admin:
-        pwd = st.text_input("請輸入管理密碼", type="password")
-        if st.button("登入後台"):
+        pwd = st.text_input("後台管理密碼", type="password")
+        if st.button("驗證登入"):
             if pwd == config_data["admin_password"]:
-                st.session_state.is_admin = True
-                st.rerun()
-            else: st.error("❌ 密碼錯誤")
+                st.session_state.is_admin = True; st.rerun()
+            else: st.error("密碼錯誤")
     else:
-        # 登入成功後的後台內容
-        if st.button("🚪 登出管理員模式"): 
-            st.session_state.is_admin = False
-            st.rerun()
-
-        tab1, tab2, tab3 = st.tabs(["⚙️ 名額與時間", "📁 名冊與資料", "🔑 修改密碼"])
+        if st.button("🚪 登出管理員模式"): st.session_state.is_admin = False; st.rerun()
+        t1, t2, t3 = st.tabs(["⚙️ 參數修改", "📁 資料與名冊", "🔑 密碼更換"])
         
-        with tab1:
-            st.write("### 📅 時間與名額設定")
+        with t1:
+            st.write("### 🕒 報名時程 (台灣時間)")
             c_start = datetime.strptime(config_data["start_time"], "%Y-%m-%d %H:%M:%S")
             c_end = datetime.strptime(config_data["end_time"], "%Y-%m-%d %H:%M:%S")
-            
-            col_s1, col_s2 = st.columns(2)
-            n_start_d = col_s1.date_input("開始日期", c_start.date())
-            n_start_t = col_s1.time_input("開始時間", c_start.time())
-            n_end_d = col_s2.date_input("結束日期", c_end.date())
-            n_end_t = col_s2.time_input("結束時間", c_end.time())
-            
-            if st.button("儲存時間"):
-                config_data["start_time"] = f"{n_start_d} {n_start_t.strftime('%H:%M:%S')}"
-                config_data["end_time"] = f"{n_end_d} {n_end_t.strftime('%H:%M:%S')}"
-                save_config(config_data)
-                st.success("✅ 更新成功")
+            col1, col2 = st.columns(2)
+            n_start_date = col1.date_input("開始日期", c_start.date())
+            n_start_time = col1.time_input("開始時間", c_start.time())
+            n_end_date = col2.date_input("結束日期", c_end.date())
+            n_end_time = col2.time_input("結束時間", c_end.time())
+            if st.button("💾 儲存時間"):
+                config_data["start_time"] = f"{n_start_date} {n_start_time.strftime('%H:%M:%S')}"
+                config_data["end_time"] = f"{n_end_date} {n_end_time.strftime('%H:%M:%S')}"
+                save_config(config_data); st.success("時程已更新！")
 
-            st.write("---")
-            st.write("### 🏆 社團名單")
-            with st.expander("➕ 新增社團"):
-                new_c = st.text_input("名稱")
-                l_col, w_col = st.columns(2)
-                new_l = l_col.number_input("正式", min_value=1, value=10)
-                new_w = w_col.number_input("備取", min_value=0, value=5)
-                if st.button("新增項目"):
-                    config_data["clubs"][new_c] = {"limit": int(new_l), "wait_limit": int(new_w)}
-                    save_config(config_data); st.rerun()
-            
-            for c, cfg in list(config_data["clubs"].items()):
-                c_c1, c_c2 = st.columns([4, 1])
-                c_c1.write(f"{c} (正{cfg['limit']} / 備{cfg['wait_limit']})")
-                if c_c2.button("刪除", key=f"del_{c}"):
-                    del config_data["clubs"][c]
-                    save_config(config_data); st.rerun()
+            st.divider()
+            st.write("### 🏆 社團名額管理")
+            for club_name, cfg in list(config_data["clubs"].items()):
+                with st.container(border=True):
+                    ec1, ec2, ec3, ec4 = st.columns([2, 1, 1, 1])
+                    new_n = ec1.text_input("社團名", value=club_name, key=f"n_{club_name}")
+                    new_l = ec2.number_input("正取", value=cfg['limit'], key=f"l_{club_name}")
+                    new_w = ec2.number_input("備取", value=cfg['wait_limit'], key=f"w_{club_name}")
+                    if ec4.button("🗑️", key=f"d_{club_name}"):
+                        del config_data["clubs"][club_name]; save_config(config_data); st.rerun()
+                    if new_l != cfg['limit'] or new_w != cfg['wait_limit'] or new_n != club_name:
+                        config_data["clubs"][new_n] = {"limit": int(new_l), "wait_limit": int(new_w)}
+                        if new_n != club_name: del config_data["clubs"][club_name]
+                        save_config(config_data)
+            if st.button("➕ 新增社團"):
+                config_data["clubs"]["新社團"] = {"limit": 10, "wait_limit": 5}; save_config(config_data); st.rerun()
 
-        with tab2:
-            st.write("### 📥 資料操作")
+        with t2:
             if not reg_df.empty:
                 csv = reg_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-                st.download_button("📥 下載報名清單", csv, "result.csv", "text/csv")
-            
-            st.write("---")
-            uploaded_excel = st.file_uploader("上傳學生名冊 (.xlsx)", type=["xlsx"])
-            if uploaded_excel:
-                try:
-                    df_std = pd.read_excel(uploaded_excel, dtype={"班級": str, "座號": str})
-                    df_std.to_excel(STUDENT_LIST_FILE, index=False)
-                    st.success("✅ 名冊已上傳")
-                except: st.error("上傳失敗")
-            
-            st.write("---")
-            if st.checkbox("確定要重設所有報名？"):
-                if st.button("🔥 一鍵清空資料", type="primary"):
-                    if os.path.exists(REG_FILE): os.remove(REG_FILE)
-                    st.rerun()
+                st.download_button("💾 下載 CSV 報名清單", csv, "registrations.csv", "text/csv")
+            st.divider()
+            st.info("💡 提醒：Excel 必須包含「班級」、「座號」、「姓名」、「學號」欄位。")
+            uploaded = st.file_uploader("上傳 Excel 名冊 (.xlsx)", type=["xlsx"])
+            if uploaded:
+                pd.read_excel(uploaded, dtype={"班級": str, "座號": str, "學號": str}).to_excel(STUDENT_LIST_FILE, index=False)
+                st.success("名冊上傳成功！")
 
-        with tab3:
-            st.write("### 🔐 修改密碼")
-            new_p = st.text_input("新密碼", type="password")
-            if st.button("儲存新密碼"):
-                config_data["admin_password"] = new_p
-                save_config(config_data); st.success("已更新")
-
-# --- 功能二：學生報名 (核心邏輯) ---
-elif mode == "📝 學生報名":
+# ----------------------------------------------------------------
+# 【二、學生報名】 - 整合學號驗證按鈕 + 名字放大
+# ----------------------------------------------------------------
+elif st.session_state.current_page == "📝 學生報名":
     now = get_taiwan_now()
     start_dt = datetime.strptime(config_data["start_time"], "%Y-%m-%d %H:%M:%S")
     end_dt = datetime.strptime(config_data["end_time"], "%Y-%m-%d %H:%M:%S")
-    
-    # 倒數邏輯
+
     if now < start_dt:
         diff = start_dt - now
-        st.warning("⏳ 報名尚未開始")
-        if diff.total_seconds() < 60:
-            st.error(f"🚀 即將開始：{int(diff.total_seconds())} 秒")
-            time.sleep(1); st.rerun()
-        else:
-            st.metric("距離開放還有", f"{diff.days}天 {diff.seconds//3600}時 {(diff.seconds//60)%60}分")
-            st.stop()
-    elif now > end_dt:
-        st.error("❌ 報名已結束")
+        st.warning(f"⏳ 報名尚未開始。距離開放還有：{diff.days}天 {diff.seconds//3600}時 {(diff.seconds//60)%60}分")
         st.stop()
-    else:
-        # 進行中倒數
-        diff_end = end_dt - now
-        total_sec = int(diff_end.total_seconds())
-        if total_sec < 60:
-            st.error(f"🚨 系統關閉倒數：{total_sec} 秒")
-            time.sleep(1); st.rerun()
-        else:
-            st.info(f"🔓 報名開放中！距離結束還有：{diff_end.days}天 {diff_end.seconds//3600}時 {(diff_end.seconds//60)%60}分")
-
-    # 表單區
+    elif now > end_dt:
+        st.error("❌ 報名已截止")
+        st.stop()
+    
     if not os.path.exists(STUDENT_LIST_FILE):
-        st.info("👋 歡迎！請管理員先進入後台確認名冊。")
+        st.info("👋 請管理員先上傳名冊。")
     else:
-        std_df = pd.read_excel(STUDENT_LIST_FILE, dtype={"班級": str, "座號": str})
-        all_cls = sorted(std_df["班級"].unique())
-        f_c1, f_c2, f_c3 = st.columns(3)
-        sel_cls = f_c1.selectbox("班級", all_cls)
-        df_cls = std_df[std_df["班級"] == sel_cls]
-        sel_seat = f_c2.selectbox("座號", sorted(df_cls["座號"].unique()))
-        sel_name = df_cls[df_cls["座號"] == sel_seat].iloc[0]["姓名"]
-        f_c3.text_input("姓名", value=sel_name, disabled=True)
+        std_df = pd.read_excel(STUDENT_LIST_FILE, dtype={"班級": str, "座號": str, "學號": str})
+        std_df["座號"] = std_df["座號"].apply(lambda x: str(x).zfill(2))
         
-        st.write("### 🎯 選擇社團")
-        avail = []
-        for c, cfg in config_data["clubs"].items():
-            count = len(reg_df[reg_df["社團"] == c])
-            if count < (cfg["limit"] + cfg["wait_limit"]):
-                tag = "(正式)" if count < cfg["limit"] else "(備取)"
-                avail.append(f"{c} {tag}")
+        st.write("### 1️⃣ 班級")
+        classes = sorted(std_df["班級"].unique())
+        sel_class = st.segmented_control("班級選擇", options=classes, label_visibility="collapsed")
         
-        if avail:
-            choice = st.selectbox("請選擇：", avail)
-            real_c = choice.split(" (")[0]
-            if st.button("確認報名", use_container_width=True):
-                if not reg_df[(reg_df["班級"] == sel_cls) & (reg_df["座號"] == sel_seat)].empty:
-                    st.warning("你已報名過！")
-                else:
-                    c_count = len(reg_df[reg_df["社團"] == real_c])
-                    status = "正式" if c_count < config_data["clubs"][real_c]["limit"] else "備取"
-                    new_r = pd.DataFrame({"班級":[sel_cls], "座號":[sel_seat], "姓名":[sel_name], "社團":[real_c], "報名時間":[get_taiwan_now().strftime('%Y-%m-%d %H:%M:%S')], "狀態":[status]})
-                    new_r.to_csv(REG_FILE, mode='a', index=False, header=not os.path.exists(REG_FILE), encoding="utf-8-sig")
-                    st.success(f"🎊 報名成功：{status}"); st.balloons(); time.sleep(2); st.rerun()
-        else: st.error("社團已全數額滿")
+        if sel_class:
+            st.write("### 2️⃣ 座號")
+            seats = sorted(std_df[std_df["班級"] == sel_class]["座號"].unique())
+            sel_seat = st.segmented_control("座號選擇", options=seats, label_visibility="collapsed")
+            
+            if sel_seat:
+                # 偵測是否更換了學生
+                current_id_key = f"{sel_class}_{sel_seat}"
+                if st.session_state.last_student != current_id_key:
+                    st.session_state.id_verified = False
+                    st.session_state.last_student = current_id_key
 
-# --- 功能三：查詢報名 ---
+                student_row = std_df[(std_df["班級"] == sel_class) & (std_df["座號"] == sel_seat)].iloc[0]
+                
+                # 身分驗證區
+                st.divider()
+                st.write("### 🛡️ 3️⃣ 身分驗證")
+                input_sid = st.text_input("🔑 請輸入學號確認身分：", type="password")
+                
+                # 驗證按鈕
+                if st.button("確定驗證身分", use_container_width=True):
+                    if input_sid == str(student_row["學號"]):
+                        st.session_state.id_verified = True
+                        # --- 修改處：使用 Markdown 放大並加粗名字 ---
+                        st.success(f"### ✅ 驗證成功：**{student_row['姓名']}** 同學\n\n請在下方選擇社團")
+                    else:
+                        st.session_state.id_verified = False
+                        st.error("❌ 學號不正確，請重新確認")
+
+                # 驗證通過才顯示社團選擇
+                if st.session_state.id_verified:
+                    st.divider()
+                    st.write(f"### 🎯 4️⃣ 選擇社團")
+                    avail_options = []
+                    for c, cfg in config_data["clubs"].items():
+                        reg_count = len(reg_df[reg_df["社團"] == c])
+                        limit = cfg["limit"]
+                        wait_limit = cfg["wait_limit"]
+                        if reg_count < limit:
+                            avail_options.append(f"{c} (正取, 剩{limit - reg_count}人)")
+                        elif reg_count < (limit + wait_limit):
+                            avail_options.append(f"{c} (備取, 剩{(limit + wait_limit) - reg_count}人)")
+                    
+                    if avail_options:
+                        choice = st.radio("社團選項", avail_options, horizontal=True, label_visibility="collapsed")
+                        if st.button("🚀 確認提交報名", use_container_width=True, type="primary"):
+                            if not reg_df[(reg_df["班級"] == sel_class) & (reg_df["座號"] == sel_seat)].empty:
+                                st.warning("⚠️ 此座號已報名過。")
+                            else:
+                                real_club = choice.split(" (")[0]
+                                status = "正取" if len(reg_df[reg_df["社團"] == real_club]) < config_data["clubs"][real_club]["limit"] else "備取"
+                                new_row = pd.DataFrame({"班級": [sel_class], "座號": [sel_seat], "姓名": [student_row['姓名']], "社團": [real_club], "報名時間": [get_taiwan_now().strftime('%Y-%m-%d %H:%M:%S')], "狀態": [status]})
+                                new_row.to_csv(REG_FILE, mode='a', index=False, header=not os.path.exists(REG_FILE), encoding="utf-8-sig")
+                                st.success("🎊 報名成功！")
+                                st.balloons(); time.sleep(2); st.session_state.id_verified = False; st.rerun()
+                    else: st.error("😭 社團名額已全數額滿")
+
+# ----------------------------------------------------------------
+# 【三、查詢報名】
+# ----------------------------------------------------------------
 else:
-    st.subheader("🔍 查詢報名狀態")
-    q_name = st.text_input("輸入完整姓名：")
-    if q_name:
-        res = reg_df[reg_df["姓名"] == q_name]
-        if not res.empty: st.table(res)
-        else: st.warning("查無資料")
+    st.subheader("🔍 查詢報名結果")
+    name_input = st.text_input("輸入完整姓名搜尋")
+    if st.button("開始查詢", use_container_width=True):
+        if name_input and not reg_df.empty:
+            df = reg_df.copy().sort_values(by="報名時間")
+            df['序號'] = df.groupby(['社團', '狀態']).cumcount() + 1
+            df['狀態'] = df.apply(lambda x: f"{x['狀態']}{str(x['序號']).zfill(2)}", axis=1)
+            result = df[df["姓名"] == name_input]
+            if not result.empty:
+                st.success(f"找到 {len(result)} 筆紀錄：")
+                st.table(result[["班級", "座號", "姓名", "社團", "報名時間", "狀態"]])
+            else: st.warning("查無資料")
