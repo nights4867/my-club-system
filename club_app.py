@@ -20,7 +20,7 @@ def load_config():
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     return {
-        "clubs": {"極地探險社": {"limit": 10, "wait_limit": 5, "desc": "探索未知的領域"}},
+        "clubs": {"極地探險社": {"limit": 10, "wait_limit": 5}}, # 移除預設簡介
         "start_time": "2026-02-09 08:00:00",
         "end_time": "2026-02-09 17:00:00",
         "admin_password": "admin"
@@ -39,7 +39,7 @@ else:
     reg_df = pd.DataFrame(columns=["班級", "座號", "姓名", "社團", "報名時間", "狀態"])
 
 # --- 2. 介面與狀態初始化 ---
-st.set_page_config(page_title="頂級社團報名系統 V14", page_icon="💎", layout="centered")
+st.set_page_config(page_title="頂級社團報名系統 V14.4", page_icon="💎", layout="centered")
 
 # 初始化狀態
 if "current_page" not in st.session_state: st.session_state.current_page = "📝 學生報名"
@@ -72,6 +72,23 @@ def confirm_submission(sel_class, sel_seat, name, club, status):
         st.session_state.id_verified = False
         st.rerun()
 
+# --- [新增功能] 確認清除資料彈窗 ---
+@st.dialog("🧨 危險操作確認")
+def confirm_clear_data():
+    st.error("⚠️ 您確定要清除所有報名資料嗎？此操作無法復原！")
+    st.write("這將會刪除 `club_registrations.csv` 檔案中的所有紀錄，讓系統回到初始狀態。")
+    
+    if st.button("🧨 是的，我確定要刪除所有資料", type="primary"):
+        if os.path.exists(REG_FILE):
+            os.remove(REG_FILE)
+            # 重新建立空檔案
+            pd.DataFrame(columns=["班級", "座號", "姓名", "社團", "報名時間", "狀態"]).to_csv(REG_FILE, index=False, encoding="utf-8-sig")
+            st.success("✅ 所有資料已清空！")
+            time.sleep(1)
+            st.rerun()
+        else:
+            st.info("目前本來就沒有資料喔。")
+
 # --- 4. 頂部標題與導覽 ---
 st.markdown("<h1 style='text-align: center; color: #1E3A8A;'>🏫 社團線上報名系統</h1>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; color: #6B7280;'>請依序完成身分驗證後，選擇您的心儀社團</p>", unsafe_allow_html=True)
@@ -84,7 +101,7 @@ if nav_col3.button("🛠️ 管理員後台", use_container_width=True): st.sess
 st.divider()
 
 # ----------------------------------------------------------------
-# 【一、管理員後台】 - [優化：數據看板]
+# 【一、管理員後台】 - [已移除簡介功能]
 # ----------------------------------------------------------------
 if st.session_state.current_page == "🛠️ 管理員後台":
     if not st.session_state.get("is_admin", False):
@@ -94,7 +111,7 @@ if st.session_state.current_page == "🛠️ 管理員後台":
             else: st.error("密碼不正確")
     else:
         if st.button("🚪 安全登出"): st.session_state.is_admin = False; st.rerun()
-        t1, t2, t3, t4 = st.tabs(["📊 實時看板", "⚙️ 參數設定", "📁 數據備份", "🔑 權限管理"])
+        t1, t2, t3, t4 = st.tabs(["📊 實時看板", "⚙️ 參數設定", "📁 數據與備份", "🔑 權限管理"])
         
         with t1:
             st.write("### 📈 報名狀況即時統計")
@@ -125,7 +142,7 @@ if st.session_state.current_page == "🛠️ 管理員後台":
                 save_config(config_data); st.success("報名時段已更新！")
             
             st.divider()
-            st.write("### 🏆 社團額度與簡介")
+            st.write("### 🏆 社團額度管理")
             for c_name, cfg in list(config_data["clubs"].items()):
                 with st.container(border=True):
                     c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
@@ -135,26 +152,37 @@ if st.session_state.current_page == "🛠️ 管理員後台":
                     if c4.button("🗑️", key=f"d_{c_name}"):
                         del config_data["clubs"][c_name]; save_config(config_data); st.rerun()
                     
-                    n_d = st.text_input("社團簡介 (選填)", value=cfg.get("desc", ""), key=f"d_desc_{c_name}")
-                    
-                    if n_l != cfg['limit'] or n_w != cfg['wait_limit'] or n_n != c_name or n_d != cfg.get("desc", ""):
-                        config_data["clubs"][n_n] = {"limit": int(n_l), "wait_limit": int(n_w), "desc": n_d}
+                    # 邏輯修改：移除了 n_d (簡介) 的檢查與儲存
+                    if n_l != cfg['limit'] or n_w != cfg['wait_limit'] or n_n != c_name:
+                        config_data["clubs"][n_n] = {"limit": int(n_l), "wait_limit": int(n_w)}
                         if n_n != c_name: del config_data["clubs"][c_name]
                         save_config(config_data)
             if st.button("➕ 新增社團選項"):
-                config_data["clubs"]["新社團"] = {"limit": 10, "wait_limit": 5, "desc": ""}; save_config(config_data); st.rerun()
+                config_data["clubs"]["新社團"] = {"limit": 10, "wait_limit": 5}; save_config(config_data); st.rerun()
 
         with t3:
+            st.write("### 📥 資料下載與備份")
             if not reg_df.empty:
                 csv = reg_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
                 st.download_button("📥 匯出當前名單 (CSV)", csv, "registrations.csv", "text/csv")
+            else:
+                st.info("目前沒有資料可供下載。")
+
+            st.divider()
+            st.write("### 🔄 名冊更新")
             uploaded = st.file_uploader("同步學生名冊 (.xlsx)", type=["xlsx"])
             if uploaded:
                 pd.read_excel(uploaded, dtype={"班級": str, "座號": str, "學號": str}).to_excel(STUDENT_LIST_FILE, index=False)
                 st.success("名冊資料庫已完成同步！")
+            
+            # --- [保留功能] 一鍵清除資料按鈕 ---
+            st.divider()
+            st.write("### 🧨 危險區域")
+            if st.button("🗑️ 清空所有報名資料 (慎點)", type="primary"):
+                confirm_clear_data() # 呼叫彈窗
 
 # ----------------------------------------------------------------
-# 【二、學生報名】 - [優化：進度條與補 0 邏輯]
+# 【二、學生報名】 - [保留：segmented_control]
 # ----------------------------------------------------------------
 elif st.session_state.current_page == "📝 學生報名":
     now = get_taiwan_now()
@@ -177,11 +205,13 @@ elif st.session_state.current_page == "📝 學生報名":
         
         st.write("### 1️⃣ 選擇班級")
         classes = sorted(std_df["班級"].unique())
+        # 保留原本的 segmented_control
         sel_class = st.segmented_control("班級選擇", options=classes, label_visibility="collapsed")
         
         if sel_class:
             st.write("### 2️⃣ 選擇座號")
             seats = sorted(std_df[std_df["班級"] == sel_class]["座號"].unique())
+            # 保留原本的 segmented_control
             sel_seat = st.segmented_control("座號選擇", options=seats, label_visibility="collapsed")
             
             if sel_seat:
@@ -205,7 +235,7 @@ elif st.session_state.current_page == "📝 學生報名":
                         st.session_state.id_verified = False
                         st.error("❌ 學號驗證失敗，請重新輸入")
 
-                # 通過驗證才顯示 [優化：進度條]
+                # 通過驗證才顯示
                 if st.session_state.id_verified:
                     st.divider()
                     st.write("### 🎯 4️⃣ 選擇社團")
@@ -218,7 +248,7 @@ elif st.session_state.current_page == "📝 學生報名":
                         # 計算進度與顏色
                         prog = min(c_reg / c_lim, 1.0) if c_lim > 0 else 1.0
                         label = f"{club_n} (正取已收 {c_reg}/{c_lim})"
-                        if cfg.get("desc"): st.caption(f"💡 {cfg['desc']}")
+                        # 移除了簡介顯示 st.caption
                         st.progress(prog, text=label)
                     
                     # 製作可選清單
@@ -236,13 +266,13 @@ elif st.session_state.current_page == "📝 學生報名":
                             else:
                                 real_c = choice.split(" (")[0]
                                 status = "正取" if len(reg_df[reg_df["社團"] == real_c]) < config_data["clubs"][real_c]["limit"] else "備取"
-                                # [優化：觸發確認彈窗]
+                                # [保留：確認彈窗]
                                 confirm_submission(sel_class, sel_seat, student_row['姓名'], real_c, status)
                     else:
                         st.error("😭 很抱歉，所有名額已搶購一空。")
 
 # ----------------------------------------------------------------
-# 【三、查詢報名】 - [優化：動態流水號編碼]
+# 【三、查詢報名】 - [保留：動態流水號]
 # ----------------------------------------------------------------
 else:
     st.subheader("🔍 查詢個人報名結果")
