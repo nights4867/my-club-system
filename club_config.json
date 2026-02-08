@@ -1,0 +1,15 @@
+{
+    "clubs": {
+        "排球社": {
+            "limit": 10,
+            "wait_limit": 2
+        },
+        "桌遊社": {
+            "limit": 10,
+            "wait_limit": 2
+        }
+    },
+    "start_time": "2026-01-01 08:00:00",
+    "end_time": "2026-12-31 23:59:00",
+    "admin_password": "admin"
+}
