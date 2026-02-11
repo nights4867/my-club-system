@@ -1,7 +1,6 @@
 import streamlit as st
 import sys
 import os
-import subprocess
 import time
 import io
 import json
@@ -12,50 +11,42 @@ from datetime import datetime
 import pytz 
 
 # ==========================================
-# 0. 智慧啟動器 & 套件自癒系統
+# 0. 系統設定與套件匯入 (雲端修正版)
 # ==========================================
 if __name__ == '__main__':
     try:
         from streamlit.runtime import exists
         if not exists():
             file_path = os.path.abspath(__file__)
-            subprocess.run([sys.executable, "-m", "streamlit", "run", file_path, "--server.runOnSave", "true"])
-            sys.exit()
+            # 注意：在雲端環境通常不需要這段自動重啟，但在本機保留無妨
+            try:
+                import subprocess
+                subprocess.run([sys.executable, "-m", "streamlit", "run", file_path, "--server.runOnSave", "true"])
+                sys.exit()
+            except:
+                pass
     except ImportError:
         pass
 
-required_pkgs = [
-    ("python-docx", "docx"),
-    ("Pillow", "PIL"),
-    ("openpyxl", "openpyxl"),
-    ("reportlab", "reportlab")
-]
+# 嘗試匯入必要套件，若失敗顯示友善提示 (不再強制自動安裝)
+try:
+    from docx import Document
+    from PIL import Image, ImageDraw, ImageFont
+    import openpyxl 
+    
+    # PDF 相關
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
-for package, import_name in required_pkgs:
-    try:
-        __import__(import_name)
-    except ImportError:
-        st.warning(f"⚙️ 系統偵測到缺少 {package}，正在為您自動安裝...")
-        try:
-            subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-            st.success(f"✅ {package} 安裝成功！正在重啟系統...")
-            time.sleep(1)
-            st.rerun()
-        except Exception as e:
-            st.error(f"❌ 自動安裝失敗：{e}")
-            st.stop()
-
-from docx import Document
-from PIL import Image, ImageDraw, ImageFont
-import openpyxl 
-
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+except ImportError as e:
+    st.error(f"⚠️ 雲端環境缺少必要套件：{e}")
+    st.info("請檢查您的 requirements.txt 是否包含：python-docx, Pillow, openpyxl, reportlab")
+    st.stop()
 
 # ==========================================
 # 1. 系統路徑與設定
@@ -66,56 +57,78 @@ REG_FILE = os.path.join(BASE_DIR, "club_registrations.csv")
 STUDENT_LIST_FILE = os.path.join(BASE_DIR, "students.xlsx")
 IMAGES_DIR = os.path.join(BASE_DIR, "club_images")
 
+# 字型路徑智慧判斷 (優先找專案目錄，其次找 Windows)
+FONT_PATH = os.path.join(BASE_DIR, "msjh.ttc")
+if not os.path.exists(FONT_PATH):
+    FONT_PATH = "C:\\Windows\\Fonts\\msjh.ttc"
+
 if not os.path.exists(IMAGES_DIR):
     os.makedirs(IMAGES_DIR)
 
 # ------------------------------------------
-# [核心繪圖函數] (保持原樣，摺疊以節省篇幅)
+# [核心 1] 社團名稱轉圖片
 # ------------------------------------------
 def generate_text_image(text):
     width, height = 400, 45 
     background_color = (255, 255, 255) 
     text_color = (30, 58, 138) 
+    
     img = Image.new('RGB', (width, height), color=background_color)
     draw = ImageDraw.Draw(img)
-    font_path = "C:\\Windows\\Fonts\\msjh.ttc" 
+    
     try:
-        if os.path.exists(font_path): font = ImageFont.truetype(font_path, 24) 
-        else: font = ImageFont.load_default()
-    except: font = ImageFont.load_default()
+        if os.path.exists(FONT_PATH):
+            font = ImageFont.truetype(FONT_PATH, 24) 
+        else:
+            font = ImageFont.load_default()
+    except:
+        font = ImageFont.load_default()
+    
     bbox = draw.textbbox((0, 0), text, font=font)
     text_h = bbox[3] - bbox[1]
     draw.text((5, (height - text_h) / 2 - 3), text, fill=text_color, font=font)
+    
     img_byte_arr = io.BytesIO()
     img.save(img_byte_arr, format='PNG')
     return img_byte_arr.getvalue()
 
+# ------------------------------------------
+# [核心 2] 步驟標題轉圖片
+# ------------------------------------------
 def generate_step_image(num, text):
     width, height = 350, 40
     bg_color = (255, 255, 255)
     box_color = (0, 120, 212) 
     text_color = (50, 50, 50)
+    
     img = Image.new('RGB', (width, height), color=bg_color)
     draw = ImageDraw.Draw(img)
-    font_path = "C:\\Windows\\Fonts\\msjhbd.ttc"
-    if not os.path.exists(font_path): font_path = "C:\\Windows\\Fonts\\msjh.ttc"
+    
     try:
-        font_num = ImageFont.truetype(font_path, 22) 
-        font_text = ImageFont.truetype(font_path, 24) 
+        if os.path.exists(FONT_PATH):
+            font_num = ImageFont.truetype(FONT_PATH, 22) 
+            font_text = ImageFont.truetype(FONT_PATH, 24) 
+        else:
+            font_num = ImageFont.load_default()
+            font_text = ImageFont.load_default()
     except:
         font_num = ImageFont.load_default()
         font_text = ImageFont.load_default()
+
     box_size = 32
     box_x, box_y = 0, (height - box_size) // 2
     draw.rectangle([box_x, box_y, box_x + box_size, box_y + box_size], fill=box_color)
+    
     bbox_num = draw.textbbox((0, 0), num, font=font_num)
     nw = bbox_num[2] - bbox_num[0]
     nh = bbox_num[3] - bbox_num[1]
     draw.text((box_x + (box_size - nw) / 2, box_y + (box_size - nh) / 2 - 4), num, fill=(255, 255, 255), font=font_num)
+    
     text_x = box_x + box_size + 12
     bbox_text = draw.textbbox((0, 0), text, font=font_text)
     th = bbox_text[3] - bbox_text[1]
     draw.text((text_x, (height - th) / 2 - 5), text, fill=text_color, font=font_text)
+
     img_byte_arr = io.BytesIO()
     img.save(img_byte_arr, format='PNG')
     return img_byte_arr.getvalue()
@@ -161,28 +174,51 @@ reg_df = load_registrations()
 def load_students_with_identity():
     if not os.path.exists(STUDENT_LIST_FILE):
         return pd.DataFrame(columns=["班級", "座號", "姓名", "學號", "身分"])
+    
     df = pd.read_excel(STUDENT_LIST_FILE, dtype={"班級": str, "座號": str, "學號": str})
     df["座號"] = df["座號"].apply(lambda x: str(x).zfill(2))
+    
     if "身分" not in df.columns:
         df["身分"] = "一般生"
         df.to_excel(STUDENT_LIST_FILE, index=False)
+    
     df["身分"] = df["身分"].fillna("一般生")
     return df
 
-# --- PDF 與 ZIP 函數 ---
+# --- PDF 產生函數 (修正字型載入) ---
 def generate_merged_pdf(data_dict):
     buffer = io.BytesIO()
-    font_path = "C:\\Windows\\Fonts\\msjh.ttc"
+    
     try:
-        pdfmetrics.registerFont(TTFont('MSJH', font_path))
-        font_name = 'MSJH'
-    except: font_name = 'Helvetica'
+        # 使用全域變數 FONT_PATH
+        if os.path.exists(FONT_PATH):
+            pdfmetrics.registerFont(TTFont('MSJH', FONT_PATH))
+            font_name = 'MSJH'
+        else:
+            # 如果真的找不到字型，只好退回預設（中文會亂碼，但程式不會崩潰）
+            font_name = 'Helvetica'
+    except:
+        font_name = 'Helvetica'
     
     doc = SimpleDocTemplate(buffer, pagesize=A4)
     elements = []
+    
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontName=font_name, fontSize=18, alignment=1, spaceAfter=20)
-    normal_style = ParagraphStyle('Normal', parent=styles['Normal'], fontName=font_name, fontSize=10)
+    # 建立支援中文的樣式
+    title_style = ParagraphStyle(
+        'Title',
+        parent=styles['Heading1'],
+        fontName=font_name,
+        fontSize=18,
+        alignment=1,
+        spaceAfter=20
+    )
+    normal_style = ParagraphStyle(
+        'Normal',
+        parent=styles['Normal'],
+        fontName=font_name,
+        fontSize=10
+    )
 
     keys = list(data_dict.keys())
     for i, title in enumerate(keys):
@@ -190,6 +226,7 @@ def generate_merged_pdf(data_dict):
         elements.append(Paragraph(title, title_style))
         elements.append(Paragraph(f"列印時間: {datetime.now().strftime('%Y-%m-%d %H:%M')}", normal_style))
         elements.append(Spacer(1, 10))
+        
         table_data = [df.columns.tolist()] + df.values.tolist()
         table = Table(table_data)
         table.setStyle(TableStyle([
@@ -201,7 +238,10 @@ def generate_merged_pdf(data_dict):
             ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
         ]))
         elements.append(table)
-        if i < len(keys) - 1: elements.append(PageBreak())
+        
+        if i < len(keys) - 1:
+            elements.append(PageBreak())
+            
     doc.build(elements)
     return buffer.getvalue()
 
@@ -214,23 +254,20 @@ def create_batch_zip(data_dict, file_type="Excel"):
                 with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                     df.to_excel(writer, index=False)
                 zf.writestr(f"{file_name}.xlsx", excel_buffer.getvalue())
-            elif file_type == "PDF":
-                # 若需要單檔 PDF 打包可在這擴充，目前合併 PDF 已足夠
-                pass 
+            # PDF 在外部處理，這裡僅作為 ZIP 封裝工具
     return zip_buffer.getvalue()
 
 # ==========================================
 # 2. 介面設定
 # ==========================================
 try:
-    st.set_page_config(page_title="頂級社團報名系統 V18.25", page_icon="💎", layout="wide") # 改為 wide 讓橫向空間變大
+    st.set_page_config(page_title="頂級社團報名系統 V18.26", page_icon="💎", layout="wide")
 except:
     pass
 
 if "id_verified" not in st.session_state: st.session_state.id_verified = False
 if "last_student" not in st.session_state: st.session_state.last_student = ""
 
-# --- [版面優化重點] 側邊欄導航 ---
 with st.sidebar:
     st.title("🏫 功能選單")
     page = st.radio("前往頁面", ["📝 學生報名", "🔍 查詢報名", "🛠️ 管理員後台"])
@@ -302,7 +339,7 @@ def render_health_bar(limit, current):
         blocks += f'<div style="width:12px; height:16px; background-color:{color}; border-radius:2px; border:1px solid white; flex:none;"></div>'
     return f'<div style="display:flex; gap:2px; margin:5px 0;">{blocks}</div><div style="font-size:13px; font-weight:bold; color:gray;">{remain}/{limit}</div>'
 
-# --- 管理員邏輯函數 (保持不變) ---
+# --- 管理員邏輯 ---
 def admin_batch_action(action, selected_rows, target_club=None):
     current_df = load_registrations()
     targets = set((r['班級'], r['座號']) for r in selected_rows)
@@ -329,13 +366,6 @@ def admin_batch_add(selected_rows, target_club):
     final_df = pd.concat([current_df, pd.DataFrame(new_records)], ignore_index=True)
     final_df.to_csv(REG_FILE, index=False, encoding="utf-8-sig")
     st.toast("✅ 強制報名成功", icon="➕"); time.sleep(1); st.rerun()
-
-def admin_batch_remove_students(selected_rows):
-    all_std = load_students_with_identity()
-    targets = set((r['班級'], r['座號']) for r in selected_rows)
-    new_std = all_std[~all_std.apply(lambda x: (x['班級'], x['座號']) in targets, axis=1)]
-    new_std.to_excel(STUDENT_LIST_FILE, index=False)
-    st.toast("✅ 已移除名冊", icon="🗑️"); time.sleep(1); st.rerun()
 
 def admin_add_student_manual(cls, seat, name, sid):
     all_std = load_students_with_identity()
@@ -373,7 +403,7 @@ def admin_batch_update_identity(selected_rows, new_identity):
         st.toast(f"✅ 更新 {mask.sum()} 人為 {new_identity}", icon="🏷️"); time.sleep(1); st.rerun()
 
 # ==========================================
-# 5. 管理員後台 (版面大優化)
+# 5. 管理員後台
 # ==========================================
 if page == "🛠️ 管理員後台":
     st.subheader("🛠️ 管理員後台")
@@ -389,12 +419,10 @@ if page == "🛠️ 管理員後台":
     else:
         if st.sidebar.button("🚪 管理員登出"): st.session_state.is_admin = False; st.rerun()
         
-        # --- [優化重點] 拆分為 4 個清晰的分頁 ---
         tab_monitor, tab_student, tab_config, tab_export = st.tabs([
             "📊 實時看板", "👥 學生管理", "⚙️ 系統設定", "🖨️ 報表輸出"
         ])
         
-        # --- Tab 1: 看板 ---
         with tab_monitor:
             df = load_registrations()
             all_students_df = load_students_with_identity()
@@ -410,7 +438,7 @@ if page == "🛠️ 管理員後台":
 
                 view_tabs = st.tabs(["🏆 依社團", "🏫 依班級", "⚠️ 未選社"])
                 
-                with view_tabs[0]: # 依社團
+                with view_tabs[0]:
                     clubs_list = sorted(df["社團"].unique())
                     if clubs_list:
                         sel_club_view = st.selectbox("選擇社團", ["全部"] + clubs_list, key="v_club")
@@ -428,7 +456,7 @@ if page == "🛠️ 管理員後台":
                                     if st.button("踢除", type="primary"): admin_batch_action("delete", sel_rows)
                     else: st.info("尚無資料")
 
-                with view_tabs[1]: # 依班級
+                with view_tabs[1]:
                     classes = sorted(df["班級"].unique()) if not df.empty else []
                     if classes:
                         sel_cls = st.selectbox("選擇班級", classes, key="v_cls")
@@ -440,7 +468,7 @@ if page == "🛠️ 管理員後台":
                             if st.button("批量踢除", key="del_cls"): admin_batch_action("delete", sel_rows_c)
                     else: st.info("尚無資料")
 
-                with view_tabs[2]: # 未選社
+                with view_tabs[2]:
                     if not all_students_df.empty:
                         reg_set = set(zip(df["班級"], df["座號"]))
                         unreg = all_students_df[~all_students_df.apply(lambda x: (x["班級"], x["座號"]) in reg_set, axis=1)]
@@ -449,7 +477,6 @@ if page == "🛠️ 管理員後台":
                             u_cls = sorted(unreg["班級"].unique())
                             sel_u_c = st.selectbox("篩選班級", ["全部"] + u_cls)
                             target_u = unreg if sel_u_c == "全部" else unreg[unreg["班級"] == sel_u_c]
-                            
                             target_u.insert(0, "選取", False)
                             ed_u = st.data_editor(target_u, hide_index=True, key="ed_u")
                             s_u = ed_u[ed_u["選取"]].to_dict('records')
@@ -460,7 +487,6 @@ if page == "🛠️ 管理員後台":
                     else: st.warning("請先匯入名冊")
             else: st.info("目前尚無報名資料")
 
-        # --- Tab 2: 學生管理 ---
         with tab_student:
             all_std = load_students_with_identity()
             if not all_std.empty:
@@ -470,15 +496,12 @@ if page == "🛠️ 管理員後台":
                     sel_admin_cls = st.selectbox("選擇班級", sorted(all_std["班級"].unique()), key="id_cls_sel")
                 
                 sub_std = all_std[all_std["班級"] == sel_admin_cls].sort_values(by="座號")
-                
-                # 一鍵全班設定
                 col_btn1, col_btn2 = st.columns(2)
                 if col_btn1.button(f"⚡ {sel_admin_cls}班 全設為校隊", use_container_width=True):
                     admin_batch_update_identity(sub_std.to_dict('records'), "校隊學生")
                 if col_btn2.button(f"🔙 {sel_admin_cls}班 全設為一般", use_container_width=True):
                     admin_batch_update_identity(sub_std.to_dict('records'), "一般生")
                 
-                # 個別勾選
                 sub_std.insert(0, "選取", False)
                 ed_id = st.data_editor(sub_std, hide_index=True, disabled=["班級","姓名","學號"], key="ed_id_table")
                 sel_id = ed_id[ed_id["選取"]].to_dict('records')
@@ -488,9 +511,7 @@ if page == "🛠️ 管理員後台":
                     if c_b2.button("設為一般", key="btn_normal"): admin_batch_update_identity(sel_id, "一般生")
             
             st.divider()
-            # 異動區塊並排顯示
             col_add, col_trans = st.columns(2)
-            
             with col_add:
                 with st.container(border=True):
                     st.write("➕ **手動新增學生**")
@@ -503,7 +524,6 @@ if page == "🛠️ 管理員後台":
                         if st.form_submit_button("新增", use_container_width=True):
                             if n_c and n_s and n_n and n_id: admin_add_student_manual(n_c, n_s.zfill(2), n_n, n_id)
                             else: st.error("欄位不全")
-
             with col_trans:
                 with st.container(border=True):
                     st.write("🔄 **學生轉班/調號**")
@@ -517,9 +537,7 @@ if page == "🛠️ 管理員後台":
                             if o_c and o_s and n_c_t and n_s_t: admin_transfer_student(o_c, o_s.zfill(2), n_c_t, n_s_t.zfill(2))
                             else: st.error("欄位不全")
 
-        # --- Tab 3: 系統設定 ---
         with tab_config:
-            # 時間與密碼
             with st.container(border=True):
                 st.write("⏰ **時間與密碼設定**")
                 c_conf1, c_conf2, c_conf3 = st.columns(3)
@@ -530,17 +548,81 @@ if page == "🛠️ 管理員後台":
                     config_data.update({"start_time": new_start, "end_time": new_end, "admin_password": new_pwd})
                     save_config(config_data); st.success("已更新"); time.sleep(1); st.rerun()
 
-            # 檔案匯入 (左右分欄)
             c_imp1, c_imp2 = st.columns(2)
             with c_imp1:
                 with st.container(border=True):
                     st.write("📋 **匯入社團簡章**")
                     if st.button("🧨 清空社團"): confirm_clear_clubs()
                     f_club = st.file_uploader("上傳 Excel/Word", type=["xlsx", "docx"], key="up_c")
+                    
+                    # --- [關鍵修復] 補回匯入邏輯 ---
                     if f_club and st.button("📥 開始匯入"):
-                        # (這裡省略重複的匯入邏輯，請保持原本的 try-except 區塊)
-                        st.info("匯入功能執行中...") # 簡化顯示，邏輯同前一版
-                        # 實際邏輯請貼回原本的 Excel/Docx 解析代碼
+                        try:
+                            count = 0
+                            cats_found = set()
+                            keywords = ["類別", "類型", "性質", "分類", "Category", "Type"]
+
+                            if f_club.name.endswith(".xlsx"):
+                                d = pd.read_excel(f_club)
+                                d = d.dropna(axis=1, how='all')
+                                d = d.loc[:, ~d.columns.str.contains('^Unnamed')]
+                                target_col = None
+                                for col in d.columns:
+                                    if any(k in str(col) for k in keywords):
+                                        target_col = col; break
+                                for _, r in d.iterrows():
+                                    limit = 30
+                                    if '名額' in r:
+                                        try: limit = int(r['名額'])
+                                        except: pass
+                                    category = "綜合"
+                                    if target_col:
+                                        val = str(r[target_col]).strip()
+                                        if val and val.lower() != 'nan': category = val
+                                    elif not d.empty:
+                                        val = str(r.iloc[-1]).strip()
+                                        if val and val.lower() != 'nan': category = val
+                                    cats_found.add(category)
+                                    name = str(r['社團名稱']).strip()
+                                    if name: 
+                                        config_data["clubs"][name] = {"limit": limit, "category": category}
+                                        count += 1
+
+                            elif f_club.name.endswith(".docx"):
+                                doc = Document(f_club)
+                                if doc.tables:
+                                    t = doc.tables[0]
+                                    header_cells = t.rows[0].cells
+                                    target_index = -1
+                                    for i, cell in enumerate(header_cells):
+                                        txt = cell.text.strip().replace("\n","").replace("\r","")
+                                        if any(k in txt for k in keywords):
+                                            target_index = i; break
+                                    for i, r in enumerate(t.rows):
+                                        if i == 0: continue
+                                        cells = r.cells
+                                        if len(cells) >= 2:
+                                            name = cells[1].text.strip()
+                                            limit = 30
+                                            if len(cells) >= 5:
+                                                digs = re.findall(r'\d+', cells[4].text.strip())
+                                                if digs: limit = int(digs[0])
+                                            category = "綜合"
+                                            if target_index != -1 and target_index < len(cells):
+                                                val = cells[target_index].text.strip().replace("\n","")
+                                                if val: category = val
+                                            elif len(cells) >= 1:
+                                                val = cells[-1].text.strip().replace("\n","")
+                                                if val: category = val
+                                            cats_found.add(category)
+                                            if name:
+                                                config_data["clubs"][name] = {"limit": limit, "category": category}
+                                                count += 1
+                            
+                            if cats_found: st.toast(f"已偵測類別：{', '.join(cats_found)}")
+                            save_config(config_data); st.success(f"成功匯入 {count} 筆！"); time.sleep(1); st.rerun()
+                        except Exception as e: st.error(f"匯入錯誤: {e}")
+                    # --- [結束修復] ---
             
             with c_imp2:
                 with st.container(border=True):
@@ -551,7 +633,6 @@ if page == "🛠️ 管理員後台":
                         pd.read_excel(f_std, dtype=str).to_excel(STUDENT_LIST_FILE, index=False)
                         st.success("名冊已更新")
 
-            # 社團列表編輯
             with st.expander("📝 編輯個別社團設定"):
                 for c, cfg in list(config_data["clubs"].items()):
                     cc1, cc2, cc3, cc4 = st.columns([2, 1, 1, 0.5])
@@ -565,14 +646,12 @@ if page == "🛠️ 管理員後台":
                         save_config(config_data)
                 if st.button("➕ 新增社團"): config_data["clubs"]["新社團"] = {"limit": 30, "category": "綜合"}; save_config(config_data); st.rerun()
 
-            # 危險操作區
             with st.expander("🧨 危險操作區 (慎用)", expanded=False):
                 st.markdown("### ⚠️ 這裡的操作不可逆")
                 d1, d2 = st.columns(2)
                 if d1.button("🗑️ 清空報名資料", use_container_width=True): confirm_clear_data()
                 if d2.button("☢️ 恢復原廠設定", type="primary", use_container_width=True): confirm_factory_reset()
 
-        # --- Tab 4: 報表輸出 ---
         with tab_export:
             st.subheader("🖨️ 批次列印與下載中心")
             
@@ -628,17 +707,15 @@ if page == "🛠️ 管理員後台":
                     dl2.download_button("📥 學生名冊 Excel", f, "students.xlsx")
 
 # ==========================================
-# 6. 學生報名頁面 (版面微調)
+# 6. 學生報名
 # ==========================================
 elif page == "📝 學生報名":
     if os.path.exists(STUDENT_LIST_FILE):
         std_df = load_students_with_identity()
         all_classes = sorted(std_df["班級"].unique())
         
-        # 標題區
         st.markdown("<h2 style='text-align: center; color: #1E3A8A;'>📝 學生社團報名</h2>", unsafe_allow_html=True)
         
-        # 第一階段：選擇身分
         with st.container(border=True):
             c_grade, c_class, c_seat = st.columns(3)
             sel_grade = c_grade.selectbox("年級", ["七年級", "八年級", "九年級"])
@@ -651,7 +728,6 @@ elif page == "📝 學生報名":
                 seats = sorted(std_df[std_df["班級"] == sel_class]["座號"].unique())
                 sel_seat = c_seat.selectbox("座號", seats)
 
-        # 第二階段：驗證 (如果選好座號)
         if sel_class and sel_seat:
             current_key = f"{sel_class}_{sel_seat}"
             if st.session_state.last_student != current_key:
@@ -669,8 +745,6 @@ elif page == "📝 學生報名":
                             st.session_state.id_verified = True
                             st.rerun()
                         else: st.error("學號錯誤")
-            
-            # 第三階段：選社團 (驗證通過)
             else:
                 st.success(f"👋 歡迎：{row['姓名']}")
                 admin_set_identity = row.get("身分", "一般生")
@@ -683,7 +757,6 @@ elif page == "📝 學生報名":
                 school_team_clubs = [c for c, data in config_data["clubs"].items() if "校隊" in str(data.get("category", ""))]
                 if student_identity == "校隊學生": st.warning(f"🏅 僅顯示校隊社團：{', '.join(school_team_clubs)}")
 
-                # 顯示社團 (Grid Layout)
                 live = load_registrations()
                 my_reg = live[(live["班級"]==sel_class) & (live["座號"]==sel_seat)]
                 if not my_reg.empty: st.info(f"✅ 已報名：{my_reg.iloc[0]['社團']}")
@@ -695,7 +768,6 @@ elif page == "📝 學生報名":
                     if student_identity == "一般生" and is_team: continue
                     clubs_to_show.append(c)
                 
-                # 使用 columns 來排版社團卡片，每行 2 個
                 for i in range(0, len(clubs_to_show), 2):
                     cols = st.columns(2)
                     for j in range(2):
