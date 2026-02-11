@@ -221,7 +221,7 @@ def create_batch_zip(data_dict, file_type="Excel"):
 # 2. 介面設定
 # ==========================================
 try:
-    st.set_page_config(page_title="頂級社團報名系統 V18.31", page_icon="💎", layout="wide")
+    st.set_page_config(page_title="頂級社團報名系統 V18.32", page_icon="💎", layout="wide")
 except:
     pass
 
@@ -425,7 +425,6 @@ if page == "🛠️ 管理員後台":
                             edited = st.data_editor(sub_df, column_config={"選取": st.column_config.CheckboxColumn(default=False)}, hide_index=True, key="ed_c")
                             sel_rows = edited[edited["選取"]].to_dict('records')
                             if sel_rows:
-                                # [按鈕位置] 左踢除 / 右轉社
                                 c_act1, c_act2 = st.columns([1, 1])
                                 with c_act1:
                                     if st.button("踢除", type="primary"): admin_batch_action("delete", sel_rows)
@@ -443,13 +442,12 @@ if page == "🛠️ 管理員後台":
                         edited_c = st.data_editor(c_reg, hide_index=True, key="ed_cls")
                         sel_rows_c = edited_c[edited_c["選取"]].to_dict('records')
                         if sel_rows_c:
-                            # --- [修改重點] 這裡加入了轉社功能 ---
+                            # 班級視角：左踢除、右轉社
                             c_act_cls1, c_act_cls2 = st.columns([1, 1])
                             with c_act_cls1:
                                 if st.button("批量踢除", key="del_cls_btn", type="primary"):
                                     admin_batch_action("delete", sel_rows_c)
                             with c_act_cls2:
-                                # 這裡顯示所有社團供選擇
                                 target_cls_view = st.selectbox("批量轉移至", list(config_data["clubs"].keys()), key="tg_cls_view", label_visibility="collapsed")
                                 if st.button("確認轉社", key="mv_cls_btn"):
                                     admin_batch_action("move", sel_rows_c, target_cls_view)
@@ -731,7 +729,14 @@ elif page == "📝 學生報名":
                             st.rerun()
                         else: st.error("學號錯誤")
             else:
-                st.success(f"👋 歡迎：{row['姓名']}")
+                c1, c2 = st.columns([3, 1])
+                with c1: st.success(f"👋 歡迎：{row['姓名']}")
+                with c2:
+                    if st.button("🚪 登出", use_container_width=True):
+                        st.session_state.id_verified = False
+                        st.session_state.last_student = ""
+                        st.rerun()
+
                 admin_set_identity = row.get("身分", "一般生")
                 is_locked = (admin_set_identity == "校隊學生")
                 
