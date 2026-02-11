@@ -11,24 +11,22 @@ from datetime import datetime
 import pytz 
 
 # ==========================================
-# 0. 系統設定與套件匯入 (雲端修正版)
+# 0. 系統設定 (雲端相容模式)
 # ==========================================
 if __name__ == '__main__':
     try:
         from streamlit.runtime import exists
         if not exists():
             file_path = os.path.abspath(__file__)
-            # 注意：在雲端環境通常不需要這段自動重啟，但在本機保留無妨
             try:
                 import subprocess
                 subprocess.run([sys.executable, "-m", "streamlit", "run", file_path, "--server.runOnSave", "true"])
                 sys.exit()
-            except:
-                pass
+            except: pass
     except ImportError:
         pass
 
-# 嘗試匯入必要套件，若失敗顯示友善提示 (不再強制自動安裝)
+# 嘗試匯入必要套件
 try:
     from docx import Document
     from PIL import Image, ImageDraw, ImageFont
@@ -44,8 +42,8 @@ try:
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 except ImportError as e:
-    st.error(f"⚠️ 雲端環境缺少必要套件：{e}")
-    st.info("請檢查您的 requirements.txt 是否包含：python-docx, Pillow, openpyxl, reportlab")
+    st.error(f"⚠️ 系統缺少必要套件：{e}")
+    st.info("請確認 requirements.txt 包含：python-docx, Pillow, openpyxl, reportlab")
     st.stop()
 
 # ==========================================
@@ -57,7 +55,7 @@ REG_FILE = os.path.join(BASE_DIR, "club_registrations.csv")
 STUDENT_LIST_FILE = os.path.join(BASE_DIR, "students.xlsx")
 IMAGES_DIR = os.path.join(BASE_DIR, "club_images")
 
-# 字型路徑智慧判斷 (優先找專案目錄，其次找 Windows)
+# 字型路徑智慧判斷 (解決雲端中文亂碼)
 FONT_PATH = os.path.join(BASE_DIR, "msjh.ttc")
 if not os.path.exists(FONT_PATH):
     FONT_PATH = "C:\\Windows\\Fonts\\msjh.ttc"
@@ -72,22 +70,15 @@ def generate_text_image(text):
     width, height = 400, 45 
     background_color = (255, 255, 255) 
     text_color = (30, 58, 138) 
-    
     img = Image.new('RGB', (width, height), color=background_color)
     draw = ImageDraw.Draw(img)
-    
     try:
-        if os.path.exists(FONT_PATH):
-            font = ImageFont.truetype(FONT_PATH, 24) 
-        else:
-            font = ImageFont.load_default()
-    except:
-        font = ImageFont.load_default()
+        font = ImageFont.truetype(FONT_PATH, 24) if os.path.exists(FONT_PATH) else ImageFont.load_default()
+    except: font = ImageFont.load_default()
     
     bbox = draw.textbbox((0, 0), text, font=font)
     text_h = bbox[3] - bbox[1]
     draw.text((5, (height - text_h) / 2 - 3), text, fill=text_color, font=font)
-    
     img_byte_arr = io.BytesIO()
     img.save(img_byte_arr, format='PNG')
     return img_byte_arr.getvalue()
@@ -100,10 +91,8 @@ def generate_step_image(num, text):
     bg_color = (255, 255, 255)
     box_color = (0, 120, 212) 
     text_color = (50, 50, 50)
-    
     img = Image.new('RGB', (width, height), color=bg_color)
     draw = ImageDraw.Draw(img)
-    
     try:
         if os.path.exists(FONT_PATH):
             font_num = ImageFont.truetype(FONT_PATH, 22) 
@@ -118,17 +107,14 @@ def generate_step_image(num, text):
     box_size = 32
     box_x, box_y = 0, (height - box_size) // 2
     draw.rectangle([box_x, box_y, box_x + box_size, box_y + box_size], fill=box_color)
-    
     bbox_num = draw.textbbox((0, 0), num, font=font_num)
     nw = bbox_num[2] - bbox_num[0]
     nh = bbox_num[3] - bbox_num[1]
     draw.text((box_x + (box_size - nw) / 2, box_y + (box_size - nh) / 2 - 4), num, fill=(255, 255, 255), font=font_num)
-    
     text_x = box_x + box_size + 12
     bbox_text = draw.textbbox((0, 0), text, font=font_text)
     th = bbox_text[3] - bbox_text[1]
     draw.text((text_x, (height - th) / 2 - 5), text, fill=text_color, font=font_text)
-
     img_byte_arr = io.BytesIO()
     img.save(img_byte_arr, format='PNG')
     return img_byte_arr.getvalue()
@@ -143,9 +129,9 @@ def load_config():
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
+            # 確保欄位存在
             for c in data.get("clubs", {}):
-                if "category" not in data["clubs"][c]:
-                    data["clubs"][c]["category"] = "綜合"
+                if "category" not in data["clubs"][c]: data["clubs"][c]["category"] = "綜合"
             if "start_time" not in data: data["start_time"] = "2026-02-09 08:00:00"
             if "end_time" not in data: data["end_time"] = "2026-02-09 17:00:00"
             if "admin_password" not in data: data["admin_password"] = "0000"
@@ -174,51 +160,30 @@ reg_df = load_registrations()
 def load_students_with_identity():
     if not os.path.exists(STUDENT_LIST_FILE):
         return pd.DataFrame(columns=["班級", "座號", "姓名", "學號", "身分"])
-    
     df = pd.read_excel(STUDENT_LIST_FILE, dtype={"班級": str, "座號": str, "學號": str})
     df["座號"] = df["座號"].apply(lambda x: str(x).zfill(2))
-    
     if "身分" not in df.columns:
         df["身分"] = "一般生"
         df.to_excel(STUDENT_LIST_FILE, index=False)
-    
     df["身分"] = df["身分"].fillna("一般生")
     return df
 
-# --- PDF 產生函數 (修正字型載入) ---
+# --- [PDF 生成] ---
 def generate_merged_pdf(data_dict):
     buffer = io.BytesIO()
-    
     try:
-        # 使用全域變數 FONT_PATH
         if os.path.exists(FONT_PATH):
             pdfmetrics.registerFont(TTFont('MSJH', FONT_PATH))
             font_name = 'MSJH'
         else:
-            # 如果真的找不到字型，只好退回預設（中文會亂碼，但程式不會崩潰）
             font_name = 'Helvetica'
-    except:
-        font_name = 'Helvetica'
+    except: font_name = 'Helvetica'
     
     doc = SimpleDocTemplate(buffer, pagesize=A4)
     elements = []
-    
     styles = getSampleStyleSheet()
-    # 建立支援中文的樣式
-    title_style = ParagraphStyle(
-        'Title',
-        parent=styles['Heading1'],
-        fontName=font_name,
-        fontSize=18,
-        alignment=1,
-        spaceAfter=20
-    )
-    normal_style = ParagraphStyle(
-        'Normal',
-        parent=styles['Normal'],
-        fontName=font_name,
-        fontSize=10
-    )
+    title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontName=font_name, fontSize=18, alignment=1, spaceAfter=20)
+    normal_style = ParagraphStyle('Normal', parent=styles['Normal'], fontName=font_name, fontSize=10)
 
     keys = list(data_dict.keys())
     for i, title in enumerate(keys):
@@ -226,7 +191,6 @@ def generate_merged_pdf(data_dict):
         elements.append(Paragraph(title, title_style))
         elements.append(Paragraph(f"列印時間: {datetime.now().strftime('%Y-%m-%d %H:%M')}", normal_style))
         elements.append(Spacer(1, 10))
-        
         table_data = [df.columns.tolist()] + df.values.tolist()
         table = Table(table_data)
         table.setStyle(TableStyle([
@@ -238,10 +202,7 @@ def generate_merged_pdf(data_dict):
             ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
         ]))
         elements.append(table)
-        
-        if i < len(keys) - 1:
-            elements.append(PageBreak())
-            
+        if i < len(keys) - 1: elements.append(PageBreak())
     doc.build(elements)
     return buffer.getvalue()
 
@@ -254,14 +215,13 @@ def create_batch_zip(data_dict, file_type="Excel"):
                 with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                     df.to_excel(writer, index=False)
                 zf.writestr(f"{file_name}.xlsx", excel_buffer.getvalue())
-            # PDF 在外部處理，這裡僅作為 ZIP 封裝工具
     return zip_buffer.getvalue()
 
 # ==========================================
 # 2. 介面設定
 # ==========================================
 try:
-    st.set_page_config(page_title="頂級社團報名系統 V18.26", page_icon="💎", layout="wide")
+    st.set_page_config(page_title="頂級社團報名系統 V18.31", page_icon="💎", layout="wide")
 except:
     pass
 
@@ -331,13 +291,23 @@ def confirm_factory_reset():
         with open(CONFIG_FILE, "w", encoding="utf-8") as f: json.dump(default_config, f, ensure_ascii=False, indent=4)
         st.success("✅ 系統已重置！"); time.sleep(2); st.rerun()
 
+# --- 血條渲染函數 (固定方格 + 自動換行) ---
 def render_health_bar(limit, current):
     remain = limit - current
-    blocks = ""
+    blocks_html = ""
     for i in range(limit):
         color = "#22C55E" if i < remain else "#E5E7EB"
-        blocks += f'<div style="width:12px; height:16px; background-color:{color}; border-radius:2px; border:1px solid white; flex:none;"></div>'
-    return f'<div style="display:flex; gap:2px; margin:5px 0;">{blocks}</div><div style="font-size:13px; font-weight:bold; color:gray;">{remain}/{limit}</div>'
+        blocks_html += f'<div style="width:8px; height:12px; background-color:{color}; border-radius:2px; margin:1px;"></div>'
+    
+    container_html = f"""
+    <div style="display:flex; flex-wrap:wrap; margin-bottom:5px;">
+        {blocks_html}
+    </div>
+    <div style="font-size:12px; font-weight:bold; color:gray;">
+        剩餘: {remain} / {limit}
+    </div>
+    """
+    return container_html
 
 # --- 管理員邏輯 ---
 def admin_batch_action(action, selected_rows, target_club=None):
@@ -366,6 +336,13 @@ def admin_batch_add(selected_rows, target_club):
     final_df = pd.concat([current_df, pd.DataFrame(new_records)], ignore_index=True)
     final_df.to_csv(REG_FILE, index=False, encoding="utf-8-sig")
     st.toast("✅ 強制報名成功", icon="➕"); time.sleep(1); st.rerun()
+
+def admin_batch_remove_students(selected_rows):
+    all_std = load_students_with_identity()
+    targets = set((r['班級'], r['座號']) for r in selected_rows)
+    new_std = all_std[~all_std.apply(lambda x: (x['班級'], x['座號']) in targets, axis=1)]
+    new_std.to_excel(STUDENT_LIST_FILE, index=False)
+    st.toast("✅ 已移除名冊", icon="🗑️"); time.sleep(1); st.rerun()
 
 def admin_add_student_manual(cls, seat, name, sid):
     all_std = load_students_with_identity()
@@ -448,12 +425,13 @@ if page == "🛠️ 管理員後台":
                             edited = st.data_editor(sub_df, column_config={"選取": st.column_config.CheckboxColumn(default=False)}, hide_index=True, key="ed_c")
                             sel_rows = edited[edited["選取"]].to_dict('records')
                             if sel_rows:
-                                c_act1, c_act2 = st.columns(2)
+                                # [按鈕位置] 左踢除 / 右轉社
+                                c_act1, c_act2 = st.columns([1, 1])
                                 with c_act1:
-                                    target = st.selectbox("轉移至", [c for c in config_data["clubs"] if c != sel_club_view])
-                                    if st.button("轉社"): admin_batch_action("move", sel_rows, target)
-                                with c_act2:
                                     if st.button("踢除", type="primary"): admin_batch_action("delete", sel_rows)
+                                with c_act2:
+                                    target = st.selectbox("轉移至", [c for c in config_data["clubs"] if c != sel_club_view], label_visibility="collapsed")
+                                    if st.button("確認轉社"): admin_batch_action("move", sel_rows, target)
                     else: st.info("尚無資料")
 
                 with view_tabs[1]:
@@ -465,7 +443,16 @@ if page == "🛠️ 管理員後台":
                         edited_c = st.data_editor(c_reg, hide_index=True, key="ed_cls")
                         sel_rows_c = edited_c[edited_c["選取"]].to_dict('records')
                         if sel_rows_c:
-                            if st.button("批量踢除", key="del_cls"): admin_batch_action("delete", sel_rows_c)
+                            # --- [修改重點] 這裡加入了轉社功能 ---
+                            c_act_cls1, c_act_cls2 = st.columns([1, 1])
+                            with c_act_cls1:
+                                if st.button("批量踢除", key="del_cls_btn", type="primary"):
+                                    admin_batch_action("delete", sel_rows_c)
+                            with c_act_cls2:
+                                # 這裡顯示所有社團供選擇
+                                target_cls_view = st.selectbox("批量轉移至", list(config_data["clubs"].keys()), key="tg_cls_view", label_visibility="collapsed")
+                                if st.button("確認轉社", key="mv_cls_btn"):
+                                    admin_batch_action("move", sel_rows_c, target_cls_view)
                     else: st.info("尚無資料")
 
                 with view_tabs[2]:
@@ -555,7 +542,6 @@ if page == "🛠️ 管理員後台":
                     if st.button("🧨 清空社團"): confirm_clear_clubs()
                     f_club = st.file_uploader("上傳 Excel/Word", type=["xlsx", "docx"], key="up_c")
                     
-                    # --- [關鍵修復] 補回匯入邏輯 ---
                     if f_club and st.button("📥 開始匯入"):
                         try:
                             count = 0
@@ -622,7 +608,6 @@ if page == "🛠️ 管理員後台":
                             if cats_found: st.toast(f"已偵測類別：{', '.join(cats_found)}")
                             save_config(config_data); st.success(f"成功匯入 {count} 筆！"); time.sleep(1); st.rerun()
                         except Exception as e: st.error(f"匯入錯誤: {e}")
-                    # --- [結束修復] ---
             
             with c_imp2:
                 with st.container(border=True):
