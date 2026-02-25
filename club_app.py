@@ -129,7 +129,6 @@ def load_config():
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            # 確保欄位存在
             for c in data.get("clubs", {}):
                 if "category" not in data["clubs"][c]: data["clubs"][c]["category"] = "綜合"
             if "start_time" not in data: data["start_time"] = "2026-02-09 08:00:00"
@@ -221,7 +220,7 @@ def create_batch_zip(data_dict, file_type="Excel"):
 # 2. 介面設定
 # ==========================================
 try:
-    st.set_page_config(page_title="頂級社團報名系統 V18.32", page_icon="💎", layout="wide")
+    st.set_page_config(page_title="頂級社團報名系統 V18.33", page_icon="💎", layout="wide")
 except:
     pass
 
@@ -442,7 +441,6 @@ if page == "🛠️ 管理員後台":
                         edited_c = st.data_editor(c_reg, hide_index=True, key="ed_cls")
                         sel_rows_c = edited_c[edited_c["選取"]].to_dict('records')
                         if sel_rows_c:
-                            # 班級視角：左踢除、右轉社
                             c_act_cls1, c_act_cls2 = st.columns([1, 1])
                             with c_act_cls1:
                                 if st.button("批量踢除", key="del_cls_btn", type="primary"):
@@ -754,8 +752,12 @@ elif page == "📝 學生報名":
                 clubs_to_show = []
                 for c, cfg in config_data["clubs"].items():
                     is_team = "校隊" in str(cfg.get("category", ""))
-                    if student_identity == "校隊學生" and not is_team: continue
-                    if student_identity == "一般生" and is_team: continue
+                    
+                    # --- [修改重點] 拿掉一般生不能選校隊的限制 ---
+                    if student_identity == "校隊學生" and not is_team:
+                        continue 
+                    # (移除了 general student blocking logic)
+
                     clubs_to_show.append(c)
                 
                 for i in range(0, len(clubs_to_show), 2):
