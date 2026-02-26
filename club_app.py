@@ -57,10 +57,10 @@ IMAGES_DIR = os.path.join(BASE_DIR, "club_images")
 if not os.path.exists(IMAGES_DIR):
     os.makedirs(IMAGES_DIR)
 
-# --- [核彈級修復 V6] 字型偽裝破解器 ---
+# --- [核彈級修復 V6.1] 字型智慧載入器 ---
 @st.cache_resource
 def get_and_register_font():
-    """智慧字型載入器：破解改名 TTC，並具備網路備援"""
+    """智慧字型載入器：優先使用 custom_font.ttf，具備自動備援與 TTC 破解"""
     target_font_name = "custom_font.ttf"
     target_font_path = os.path.join(BASE_DIR, target_font_name)
     fallback_font_path = os.path.join(BASE_DIR, "TaipeiSans.ttf")
@@ -70,32 +70,33 @@ def get_and_register_font():
     # 策略 1：嘗試讀取使用者上傳的 custom_font.ttf
     if os.path.exists(target_font_path) and os.path.getsize(target_font_path) > 100000:
         try:
-            # 先當作正常 TTF 讀取
+            # 先嘗試標準註冊
             pdfmetrics.registerFont(TTFont('MyChineseFont', target_font_path))
-            return 'MyChineseFont', target_font_path, "✅ 成功讀取上傳的 custom_font.ttf (標準格式)"
+            return 'MyChineseFont', target_font_path, "✅ 成功讀取上傳的 custom_font.ttf"
         except Exception as e1:
             try:
-                # 破解：可能骨子裡是 TTC 卻被改名為 TTF
+                # 破解：處理偽裝成 TTF 的 TTC 檔案
                 pdfmetrics.registerFont(TTFont('MyChineseFont', target_font_path, subfontIndex=0))
-                return 'MyChineseFont', target_font_path, "✅ 成功讀取上傳的 custom_font.ttf (已破解 TTC 偽裝)"
+                return 'MyChineseFont', target_font_path, "✅ 成功讀取上傳的 custom_font.ttf (TTC 模式)"
             except Exception as e2:
-                font_status_msg = f"⚠️ 上傳的字型損壞或無法解析。錯誤碼: {e2}"
+                font_status_msg = f"⚠️ custom_font.ttf 無法解析: {e2}"
 
-    # 策略 2：如果上傳的檔案無效，啟動網路備援下載台北黑體
+    # 策略 2：如果 custom_font.ttf 失敗，嘗試使用備援字型
     try:
         if not os.path.exists(fallback_font_path):
+            # 從 GitHub 下載台北黑體作為備援
             url = "https://raw.githubusercontent.com/Kanjou/Taipei-Sans-TC/master/TaipeiSansTCBeta-Regular.ttf"
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'} )
             with urllib.request.urlopen(req) as response, open(fallback_font_path, 'wb') as out_file:
                 out_file.write(response.read())
         
         if os.path.exists(fallback_font_path):
             pdfmetrics.registerFont(TTFont('MyChineseFont', fallback_font_path))
-            return 'MyChineseFont', fallback_font_path, f"{font_status_msg} ➡️ 已自動啟用備用雲端字型 (台北黑體)"
+            return 'MyChineseFont', fallback_font_path, f"{font_status_msg} ➡️ 已啟用備援字型 (台北黑體)"
     except Exception as e:
-        return 'Helvetica', None, f"❌ 所有字型載入皆失敗，PDF 將出現黑方塊。錯誤: {e}"
+        return 'Helvetica', None, f"❌ 字型載入失敗: {e}"
 
-    return 'Helvetica', None, "❌ 找不到任何可用字型"
+    return 'Helvetica', None, "❌ 找不到可用字型，請上傳 custom_font.ttf 到專案根目錄"
 
 # 執行字型準備
 CURRENT_FONT_NAME, CURRENT_FONT_PATH, FONT_STATUS_MSG = get_and_register_font()
@@ -208,7 +209,7 @@ def load_students_with_identity():
     return df
 
 # --- [PDF 生成] ---
-def generate_merged_pdf(data_dict):
+def generate_merged_pdf(data_map):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4)
     elements = []
@@ -221,9 +222,9 @@ def generate_merged_pdf(data_dict):
         'Normal', parent=styles['Normal'], fontName=CURRENT_FONT_NAME, fontSize=10
     )
 
-    keys = list(data_dict.keys())
+    keys = list(data_map.keys())
     for i, title in enumerate(keys):
-        df = data_dict[title]
+        df = data_map[title]
         elements.append(Paragraph(title, title_style))
         elements.append(Paragraph(f"列印時間: {datetime.now().strftime('%Y-%m-%d %H:%M')}", normal_style))
         elements.append(Spacer(1, 10))
@@ -247,10 +248,10 @@ def generate_merged_pdf(data_dict):
     doc.build(elements)
     return buffer.getvalue()
 
-def create_batch_zip(data_dict, file_type="Excel"):
+def create_batch_zip(data_map, file_type="Excel"):
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for file_name, df in data_dict.items():
+        for file_name, df in data_map.items():
             if file_type == "Excel":
                 excel_buffer = io.BytesIO()
                 with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
@@ -297,57 +298,44 @@ def confirm_submission(sel_class, sel_seat, name, club):
         if current_count >= limit:
             st.error(f"😭 來晚了一步！該社團剛剛瞬間額滿了。"); return 
         new_row = pd.DataFrame({
-            "班級": [sel_class], "座號": [sel_seat], "姓名": [name],
-            "社團": [club], "報名時間": [get_taiwan_now().strftime('%Y-%m-%d %H:%M:%S')],
-            "狀態": ["正取"]
+            "班級": [sel_class], "座號": [sel_seat], "姓名": [name], "社團": [club],
+            "報名時間": [get_taiwan_now().strftime('%Y-%m-%d %H:%M:%S')], "狀態": ["正取"]
         })
-        new_row.to_csv(REG_FILE, mode='a', index=False, header=not os.path.exists(REG_FILE), encoding="utf-8-sig")
-        st.success(f"🎊 恭喜！您已成功報名！")
-        st.balloons(); time.sleep(2); st.session_state.id_verified = False; st.rerun()
+        pd.concat([current_df, new_row], ignore_index=True).to_csv(REG_FILE, index=False, encoding="utf-8-sig")
+        st.session_state.last_student = f"{sel_class}{sel_seat} {name}"
+        st.success(f"🎉 報名成功！恭喜加入【{club}】"); time.sleep(2); st.rerun()
 
-@st.dialog("🧨 清空報名資料確認")
 def confirm_clear_data():
-    st.error("⚠️ 確定要清除所有「報名紀錄」嗎？")
-    if st.button("🧨 確定清除", type="primary"):
-        if os.path.exists(REG_FILE):
-            os.remove(REG_FILE)
-            pd.DataFrame(columns=["班級", "座號", "姓名", "社團", "報名時間", "狀態"]).to_csv(REG_FILE, index=False, encoding="utf-8-sig")
-            st.success("✅ 資料已清空！"); time.sleep(1); st.rerun()
-
-@st.dialog("🧨 清空社團清單確認")
-def confirm_clear_clubs():
-    st.warning("⚠️ 這將刪除所有社團設定！")
-    if st.button("🧨 確定清空", type="primary"):
-        config_data["clubs"] = {}; save_config(config_data); st.success("✅ 社團已歸零！"); time.sleep(1); st.rerun()
-
-@st.dialog("☢️ 恢復原廠設定確認")
-def confirm_factory_reset():
-    st.markdown("<h3 style='color: red;'>⚠️ 警告：破壞性操作</h3><p>將刪除所有名冊、報名與設定。</p>", unsafe_allow_html=True)
-    check = st.checkbox("我已備份資料")
-    if st.button("💀 確定重置", type="primary", disabled=not check):
+    if st.button("🔥 確定清空所有報名資料？"):
         if os.path.exists(REG_FILE): os.remove(REG_FILE)
-        if os.path.exists(STUDENT_LIST_FILE): os.remove(STUDENT_LIST_FILE)
-        if os.path.exists(CONFIG_FILE): os.remove(CONFIG_FILE)
-        default_config = {"clubs": {"極地探險社": {"limit": 30, "category": "體育"}}, "start_time": "2026-02-09 08:00:00", "end_time": "2026-02-09 17:00:00", "admin_password": "0000"}
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f: json.dump(default_config, f, ensure_ascii=False, indent=4)
-        st.success("✅ 系統已重置！"); time.sleep(2); st.rerun()
+        st.success("已清空"); time.sleep(1); st.rerun()
+
+def confirm_factory_reset():
+    if st.button("💀 確定恢復原廠設定？"):
+        for f in [REG_FILE, CONFIG_FILE, STUDENT_LIST_FILE]:
+            if os.path.exists(f): os.remove(f)
+        st.success("已恢復原廠"); time.sleep(1); st.rerun()
+
+def confirm_clear_clubs():
+    if st.button("💣 確定清空所有社團簡章？"):
+        config_data["clubs"] = {}
+        save_config(config_data); st.success("已清空"); time.sleep(1); st.rerun()
 
 def render_health_bar(limit, current):
-    remain = limit - current
-    blocks_html = ""
-    for i in range(limit):
-        color = "#22C55E" if i < remain else "#E5E7EB"
-        blocks_html += f'<div style="width:8px; height:12px; background-color:{color}; border-radius:2px; margin:1px;"></div>'
-    
-    container_html = f"""
-    <div style="display:flex; flex-wrap:wrap; margin-bottom:5px;">
-        {blocks_html}
+    ratio = min(current / limit, 1.0)
+    color = "#10b981" if ratio < 0.8 else "#f59e0b" if ratio < 1.0 else "#ef4444"
+    return f"""
+    <div style="width:100%; background:#e5e7eb; border-radius:10px; height:8px; margin:10px 0;">
+        <div style="width:{ratio*100}%; background:{color}; height:8px; border-radius:10px;"></div>
     </div>
-    <div style="font-size:12px; font-weight:bold; color:gray;">
-        剩餘: {remain} / {limit}
+    <div style="display:flex; justify-content:space-between; font-size:12px; color:#6b7280;">
+        <span>名額: {limit}</span><span>已報: {current}</span>
     </div>
     """
-    return container_html
+
+# ==========================================
+# 4. 管理功能
+# ==========================================
 
 def admin_batch_action(action, selected_rows, target_club=None):
     current_df = load_registrations()
@@ -449,65 +437,36 @@ if page == "🛠️ 管理員後台":
                 m2.metric("正取", f"{len(df[df['狀態']=='正取'])} 人")
                 m3.metric("報名率", f"{int(len(df)/len(all_students_df)*100) if not all_students_df.empty else 0} %")
                 
-                with st.expander("📊 查看社團報名長條圖", expanded=False):
-                    st.bar_chart(df['社團'].value_counts())
-
-                view_tabs = st.tabs(["🏆 依社團", "🏫 依班級", "⚠️ 未選社"])
+                st.write("##### 📋 報名名單")
+                st.caption("勾選學生後可執行批次操作")
+                df_with_select = df.copy()
+                df_with_select.insert(0, "選取", False)
+                edited_df = st.data_editor(df_with_select, hide_index=True, key="reg_table")
+                selected_rows = edited_df[edited_df["選取"]].to_dict('records')
                 
-                with view_tabs[0]:
-                    clubs_list = sorted(df["社團"].unique())
-                    if clubs_list:
-                        sel_club_view = st.selectbox("選擇社團", ["全部"] + clubs_list, key="v_club")
-                        if sel_club_view != "全部":
-                            sub_df = df[df["社團"]==sel_club_view].sort_values(by=["班級", "座號"])
-                            sub_df.insert(0, "選取", False)
-                            edited = st.data_editor(sub_df, column_config={"選取": st.column_config.CheckboxColumn(default=False)}, hide_index=True, key="ed_c")
-                            sel_rows = edited[edited["選取"]].to_dict('records')
-                            if sel_rows:
-                                c_act1, c_act2 = st.columns([1, 1])
-                                with c_act1:
-                                    if st.button("踢除", type="primary"): admin_batch_action("delete", sel_rows)
-                                with c_act2:
-                                    target = st.selectbox("轉移至", [c for c in config_data["clubs"] if c != sel_club_view], label_visibility="collapsed")
-                                    if st.button("確認轉社"): admin_batch_action("move", sel_rows, target)
-                    else: st.info("尚無資料")
-
-                with view_tabs[1]:
-                    classes = sorted(df["班級"].unique()) if not df.empty else []
-                    if classes:
-                        sel_cls = st.selectbox("選擇班級", classes, key="v_cls")
-                        c_reg = df[df["班級"]==sel_cls].sort_values(by="座號")
-                        c_reg.insert(0, "選取", False)
-                        edited_c = st.data_editor(c_reg, hide_index=True, key="ed_cls")
-                        sel_rows_c = edited_c[edited_c["選取"]].to_dict('records')
-                        if sel_rows_c:
-                            c_act_cls1, c_act_cls2 = st.columns([1, 1])
-                            with c_act_cls1:
-                                if st.button("批量踢除", key="del_cls_btn", type="primary"):
-                                    admin_batch_action("delete", sel_rows_c)
-                            with c_act_cls2:
-                                target_cls_view = st.selectbox("批量轉移至", list(config_data["clubs"].keys()), key="tg_cls_view", label_visibility="collapsed")
-                                if st.button("確認轉社", key="mv_cls_btn"):
-                                    admin_batch_action("move", sel_rows_c, target_cls_view)
-                    else: st.info("尚無資料")
-
-                with view_tabs[2]:
-                    if not all_students_df.empty:
-                        reg_set = set(zip(df["班級"], df["座號"]))
-                        unreg = all_students_df[~all_students_df.apply(lambda x: (x["班級"], x["座號"]) in reg_set, axis=1)]
-                        if not unreg.empty:
-                            st.write(f"共 {len(unreg)} 人未報名")
-                            u_cls = sorted(unreg["班級"].unique())
-                            sel_u_c = st.selectbox("篩選班級", ["全部"] + u_cls)
-                            target_u = unreg if sel_u_c == "全部" else unreg[unreg["班級"] == sel_u_c]
-                            target_u.insert(0, "選取", False)
-                            ed_u = st.data_editor(target_u, hide_index=True, key="ed_u")
-                            s_u = ed_u[ed_u["選取"]].to_dict('records')
-                            if s_u:
-                                t_add = st.selectbox("強制報名至", list(config_data["clubs"].keys()))
-                                if st.button("執行"): admin_batch_add(s_u, t_add)
-                        else: st.success("全員已報名！")
-                    else: st.warning("請先匯入名冊")
+                if selected_rows:
+                    c1, c2, c3 = st.columns([1, 1, 2])
+                    if c1.button("🗑️ 批次踢除", type="secondary"): admin_batch_action("delete", selected_rows)
+                    target_club = c2.selectbox("轉移至社團", list(config_data["clubs"].keys()))
+                    if c3.button("🔄 執行批次轉移"): admin_batch_action("move", selected_rows, target_club)
+                
+                st.divider()
+                st.write("##### 🔍 尚未報名學生")
+                if not all_students_df.empty:
+                    reg_set = set(zip(df["班級"], df["座號"]))
+                    unreg = all_students_df[~all_students_df.apply(lambda x: (x["班級"], x["座號"]) in reg_set, axis=1)]
+                    if not unreg.empty:
+                        u_cls = sorted(unreg["班級"].unique())
+                        sel_u_c = st.selectbox("篩選班級", ["全部"] + u_cls)
+                        target_u = unreg if sel_u_c == "全部" else unreg[unreg["班級"] == sel_u_c]
+                        target_u.insert(0, "選取", False)
+                        ed_u = st.data_editor(target_u, hide_index=True, key="ed_u")
+                        s_u = ed_u[ed_u["選取"]].to_dict('records')
+                        if s_u:
+                            t_add = st.selectbox("強制報名至", list(config_data["clubs"].keys()))
+                            if st.button("執行"): admin_batch_add(s_u, t_add)
+                    else: st.success("全員已報名！")
+                else: st.warning("請先匯入名冊")
             else: st.info("目前尚無報名資料")
 
         with tab_student:
@@ -748,56 +707,29 @@ elif page == "📝 學生報名":
             sel_grade = c_grade.selectbox("年級", ["七年級", "八年級", "九年級"])
             prefix = "7" if sel_grade == "七年級" else "8" if sel_grade == "八年級" else "9"
             target_classes = [c for c in all_classes if str(c).startswith(prefix)]
-            sel_class = c_class.selectbox("班級", target_classes) if target_classes else None
             
-            sel_seat = None
-            if sel_class:
-                seats = sorted(std_df[std_df["班級"] == sel_class]["座號"].unique())
-                sel_seat = c_seat.selectbox("座號", seats)
-
-        if sel_class and sel_seat:
-            current_key = f"{sel_class}_{sel_seat}"
-            if st.session_state.last_student != current_key:
-                st.session_state.id_verified = False
-                st.session_state.last_student = current_key
-            
-            row = std_df[(std_df["班級"] == sel_class) & (std_df["座號"] == sel_seat)].iloc[0]
-            
-            if not st.session_state.id_verified:
-                with st.form("verify"):
-                    c_v1, c_v2 = st.columns([3, 1])
-                    sid = c_v1.text_input("輸入學號驗證", type="password", placeholder="請輸入學號")
-                    if c_v2.form_submit_button("驗證", use_container_width=True):
-                        if sid == str(row["學號"]):
-                            st.session_state.id_verified = True
-                            st.rerun()
-                        else: st.error("學號錯誤")
-            else:
-                c1, c2 = st.columns([3, 1])
-                with c1: st.success(f"👋 歡迎：{row['姓名']}")
-                with c2:
-                    if st.button("🚪 登出", use_container_width=True):
-                        st.session_state.id_verified = False
-                        st.session_state.last_student = ""
-                        st.rerun()
-
-                admin_set_identity = row.get("身分", "一般生")
-                is_locked = (admin_set_identity == "校隊學生")
+            if target_classes:
+                sel_class = c_class.selectbox("班級", target_classes)
+                class_students = std_df[std_df["班級"] == sel_class].sort_values(by="座號")
+                sel_seat = c_seat.selectbox("座號", class_students["座號"].tolist())
                 
-                c_id_info, c_id_sel = st.columns([2, 1])
-                c_id_info.info(f"系統身分：{admin_set_identity}")
-                student_identity = c_id_sel.radio("身分", ["一般生", "校隊學生"], index=1 if is_locked else 0, disabled=is_locked, horizontal=True)
-
-                school_team_clubs = [c for c, data in config_data["clubs"].items() if "校隊" in str(data.get("category", ""))]
-                if student_identity == "校隊學生": st.warning(f"🏅 僅顯示校隊社團：{', '.join(school_team_clubs)}")
-
-                # 局部刷新區塊 (3秒自動更新)
-                @st.fragment(run_every=3)
+                row = class_students[class_students["座號"] == sel_seat].iloc[0]
+                student_identity = row["身分"]
+                st.write(f"👋 您好，**{sel_class}** 班 **{sel_seat}** 號 **{row['姓名']}** 同學 ({student_identity})")
+                
+                st.divider()
+                
+                live = load_registrations()
+                my_reg = live[(live["班級"] == sel_class) & (live["座號"] == sel_seat)]
+                
+                if not my_reg.empty:
+                    st.success(f"✅ 您已完成報名：【{my_reg.iloc[0]['社團']}】")
+                    if st.button("查看/更換報名 (需聯繫管理員)", disabled=True): pass
+                
                 def show_clubs(filter_identity):
-                    live = load_registrations()
-                    my_reg = live[(live["班級"]==sel_class) & (live["座號"]==sel_seat)]
-                    if not my_reg.empty: st.info(f"✅ 您已報名：{my_reg.iloc[0]['社團']}")
-
+                    st.write("### 🏆 可選社團列表")
+                    st.caption("部分社團僅限校隊學生報名")
+                    
                     clubs_to_show = []
                     for c, cfg in config_data["clubs"].items():
                         is_team = "校隊" in str(cfg.get("category", ""))
@@ -826,6 +758,8 @@ elif page == "📝 學生報名":
                                             st.button("鎖定", key=f"btn_{c_name}", disabled=True, use_container_width=True)
                 
                 show_clubs(student_identity)
+            else:
+                st.warning(f"目前名冊中沒有{sel_grade}的資料")
     else: st.error("請先匯入學生名冊")
 
 elif page == "🔍 查詢報名":
