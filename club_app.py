@@ -167,7 +167,6 @@ def load_registrations():
     else:
         return pd.DataFrame(columns=["班級", "座號", "姓名", "社團", "報名時間", "狀態"])
 
-# [註解] 加入快取機制 (TTL=1秒)，讓 300 人同時讀取時不會卡死硬碟
 @st.cache_data(ttl=1)
 def get_live_registrations():
     return load_registrations()
@@ -175,14 +174,25 @@ def get_live_registrations():
 reg_df = load_registrations()
 
 def load_students_with_identity():
+    # [註解] 讀取學生清單時，若沒有「鎖定社團」欄位，就自動補上空欄位
     if not os.path.exists(STUDENT_LIST_FILE):
-        return pd.DataFrame(columns=["班級", "座號", "姓名", "學號", "身分"])
-    df = pd.read_excel(STUDENT_LIST_FILE, dtype={"班級": str, "座號": str, "學號": str})
+        return pd.DataFrame(columns=["班級", "座號", "姓名", "學號", "身分", "鎖定社團"])
+    df = pd.read_excel(STUDENT_LIST_FILE, dtype={"班級": str, "座號": str, "學號": str, "鎖定社團": str})
     df["座號"] = df["座號"].apply(lambda x: str(x).zfill(2))
+    
+    changed = False
     if "身分" not in df.columns:
         df["身分"] = "一般生"
-        df.to_excel(STUDENT_LIST_FILE, index=False)
+        changed = True
+    if "鎖定社團" not in df.columns:
+        df["鎖定社團"] = ""
+        changed = True
+
     df["身分"] = df["身分"].fillna("一般生")
+    df["鎖定社團"] = df["鎖定社團"].fillna("")
+
+    if changed:
+        df.to_excel(STUDENT_LIST_FILE, index=False)
     return df
 
 # --- [Word 生成函式] ---
@@ -257,7 +267,6 @@ def create_batch_zip(data_dict, file_type="Excel"):
                 zf.writestr(f"{file_name}.xlsx", excel_buffer.getvalue())
     return zip_buffer.getvalue()
 
-# [註解] 動態偵測 Streamlit 是否支援 fragment (用來做局部自動更新)
 def get_fragment_decorator():
     if hasattr(st, "fragment"): return st.fragment(run_every=1)
     if hasattr(st, "experimental_fragment"): return st.experimental_fragment(run_every=1)
@@ -269,7 +278,7 @@ auto_refresh_fragment = get_fragment_decorator()
 # 2. 介面設定
 # ==========================================
 try:
-    st.set_page_config(page_title="頂級社團報名系統 V18.35", page_icon="💎", layout="wide")
+    st.set_page_config(page_title="頂級社團報名系統 V18.36", page_icon="💎", layout="wide")
 except:
     pass
 
@@ -292,7 +301,6 @@ def confirm_submission(sel_class, sel_seat, name, club):
     st.image(img_data, use_container_width=True)
     st.info("系統將在您按下按鈕的瞬間，再次確認剩餘名額。")
     if st.button("✅ 我確認無誤，送出報名", use_container_width=True, type="primary"):
-        # [註解] 寫入時直接讀取最新檔案，避免快取延遲導致超賣
         current_df = load_registrations()
         if not current_df[(current_df["班級"] == sel_class) & (current_df["座號"] == sel_seat)].empty:
             st.error("⚠️ 寫入失敗：系統發現您剛剛已經完成報名了！")
@@ -309,7 +317,6 @@ def confirm_submission(sel_class, sel_seat, name, club):
             "狀態": ["正取"]
         })
         new_row.to_csv(REG_FILE, mode='a', index=False, header=not os.path.exists(REG_FILE), encoding="utf-8-sig")
-        # 清除快取以確保馬上更新
         st.cache_data.clear()
         st.success(f"🎊 恭喜！您已成功報名！")
         st.balloons(); time.sleep(2); st.rerun()
@@ -401,7 +408,7 @@ def admin_batch_remove_students(selected_rows):
 def admin_add_student_manual(cls, seat, name, sid):
     all_std = load_students_with_identity()
     if not all_std[(all_std["班級"] == cls) & (all_std["座號"] == seat)].empty: st.error("❌ 學生已存在"); return
-    new_row = pd.DataFrame({"班級": [cls], "座號": [seat], "姓名": [name], "學號": [sid], "身分": ["一般生"]})
+    new_row = pd.DataFrame({"班級": [cls], "座號": [seat], "姓名": [name], "學號": [sid], "身分": ["一般生"], "鎖定社團": [""]})
     final_std = pd.concat([all_std, new_row], ignore_index=True)
     try: final_std = final_std.sort_values(by=["班級", "座號"])
     except: pass
@@ -433,6 +440,22 @@ def admin_batch_update_identity(selected_rows, new_identity):
         all_std.loc[mask, "身分"] = new_identity
         all_std.to_excel(STUDENT_LIST_FILE, index=False)
         st.toast(f"✅ 更新 {mask.sum()} 人為 {new_identity}", icon="🏷️"); time.sleep(1); st.rerun()
+
+# [註解] 新增：批次處理學生鎖定社團的功能
+def admin_batch_update_locked_club(selected_rows, target_club, action="lock"):
+    all_std = load_students_with_identity()
+    targets = set((r['班級'], r['座號']) for r in selected_rows)
+    mask = all_std.apply(lambda x: (x['班級'], x['座號']) in targets, axis=1)
+    if mask.any():
+        if action == "lock":
+            all_std.loc[mask, "鎖定社團"] = target_club
+            st.toast(f"✅ 已將 {mask.sum()} 人鎖定至 {target_club}", icon="🔒")
+        else:
+            all_std.loc[mask, "鎖定社團"] = ""
+            st.toast(f"✅ 已解除 {mask.sum()} 人的社團鎖定", icon="🔓")
+        all_std.to_excel(STUDENT_LIST_FILE, index=False)
+        time.sleep(1)
+        st.rerun()
 
 # ==========================================
 # 5. 管理員後台
@@ -529,7 +552,7 @@ if page == "🛠️ 管理員後台":
         with tab_student:
             all_std = load_students_with_identity()
             if not all_std.empty:
-                st.write("##### 🏅 學生身分設定 (校隊/一般)")
+                st.write("##### 🏅 1. 學生身分設定 (校隊/一般)")
                 c_s1, c_s2 = st.columns([1, 2])
                 with c_s1:
                     sel_admin_cls = st.selectbox("選擇班級", sorted(all_std["班級"].unique()), key="id_cls_sel")
@@ -542,7 +565,7 @@ if page == "🛠️ 管理員後台":
                     admin_batch_update_identity(sub_std.to_dict('records'), "一般生")
 
                 sub_std.insert(0, "選取", False)
-                ed_id = st.data_editor(sub_std, hide_index=True, disabled=["班級","姓名","學號"], key="ed_id_table")
+                ed_id = st.data_editor(sub_std, hide_index=True, disabled=["班級","姓名","學號","鎖定社團"], key="ed_id_table")
                 sel_id = ed_id[ed_id["選取"]].to_dict('records')
                 if sel_id:
                     c_b1, c_b2 = st.columns(2)
@@ -553,7 +576,7 @@ if page == "🛠️ 管理員後台":
             col_add, col_trans = st.columns(2)
             with col_add:
                 with st.container(border=True):
-                    st.write("➕ 手動新增學生")
+                    st.write("##### ➕ 2. 手動新增學生")
                     with st.form("add_std"):
                         ac1, ac2 = st.columns(2)
                         n_c = ac1.text_input("班級")
@@ -565,7 +588,7 @@ if page == "🛠️ 管理員後台":
                             else: st.error("欄位不全")
             with col_trans:
                 with st.container(border=True):
-                    st.write("🔄 學生轉班/調號")
+                    st.write("##### 🔄 3. 學生轉班/調號")
                     with st.form("trans_std"):
                         tc1, tc2 = st.columns(2)
                         o_c = tc1.text_input("舊班級")
@@ -575,6 +598,33 @@ if page == "🛠️ 管理員後台":
                         if st.form_submit_button("執行異動", use_container_width=True):
                             if o_c and o_s and n_c_t and n_s_t: admin_transfer_student(o_c, o_s.zfill(2), n_c_t, n_s_t.zfill(2))
                             else: st.error("欄位不全")
+            
+            # [註解] 新增：第 4 項 學生社團綁定
+            st.divider()
+            if not all_std.empty:
+                st.write("##### 🔒 4. 學生社團綁定與鎖定")
+                st.info("💡 被綁定的學生，登入後「只會看到」被指定的社團，無法選擇其他社團。可點選表格左上角的核取方塊「全選」，或單獨勾選進行「個別/批次鎖定」。")
+                
+                c_l1, _ = st.columns([1, 2])
+                with c_l1:
+                    sel_lock_cls = st.selectbox("選擇班級 (綁定專用)", sorted(all_std["班級"].unique()), key="lock_cls_sel")
+
+                sub_lock_std = all_std[all_std["班級"] == sel_lock_cls].sort_values(by="座號")
+                sub_lock_std.insert(0, "選取", False)
+                
+                # 使用 data_editor，內建表頭全選功能與單列選取
+                ed_lock = st.data_editor(sub_lock_std, hide_index=True, disabled=["班級","姓名","學號","身分","鎖定社團"], key="ed_lock_table")
+                sel_lock_id = ed_lock[ed_lock["選取"]].to_dict('records')
+
+                if sel_lock_id:
+                    c_act1, c_act2, c_act3 = st.columns([2, 1, 1])
+                    target_lock_club = c_act1.selectbox("選擇要綁定的社團", list(config_data["clubs"].keys()), key="lock_club_sel")
+                    
+                    if c_act2.button("🔒 執行鎖定", use_container_width=True, type="primary"):
+                        admin_batch_update_locked_club(sel_lock_id, target_lock_club, "lock")
+                    
+                    if c_act3.button("🔓 解除鎖定", use_container_width=True):
+                        admin_batch_update_locked_club(sel_lock_id, "", "unlock")
 
         with tab_config:
             with st.container(border=True):
@@ -593,9 +643,8 @@ if page == "🛠️ 管理員後台":
                     st.write("📋 匯入社團簡章")
                     if st.button("🧨 清空社團"): confirm_clear_clubs()
                     f_club = st.file_uploader("上傳 Excel/Word", type=["xlsx", "docx"], key="up_c")
-                    # (此處保留原匯入邏輯)
                     if f_club and st.button("📥 開始匯入"):
-                        pass # ... 省略原本長長的匯入邏輯，保持原樣 ...
+                        pass # 保持原樣省略
 
             with c_imp2:
                 with st.container(border=True):
@@ -635,7 +684,6 @@ if page == "🛠️ 管理員後台":
             with c_content:
                 tab_dl_cls, tab_dl_club = st.tabs(["🏫 按班級列印", "🏆 按社團列印"])
                 
-                # [註解] 修正 Bug：將 download_button 移出 if st.button 區塊，直接產生並顯示下載按鈕
                 with tab_dl_cls:
                     if not df.empty:
                         all_cls = sorted(df["班級"].unique())
@@ -643,7 +691,6 @@ if page == "🛠️ 管理員後台":
                         if st.button("全選班級"): sel_cls = all_cls
 
                         if sel_cls:
-                            # 只要有選，就直接準備資料並渲染下載按鈕
                             data_map = {f"{c}班_名單": df[df["班級"]==c].sort_values("座號")[["班級","座號","姓名","社團"]] for c in sel_cls}
                             if "Word" in fmt:
                                 out = generate_merged_docx(data_map)
@@ -688,20 +735,17 @@ elif page == "📝 學生報名":
 
         st.markdown("<h2 style='text-align: center; color: #1E3A8A;'>📝 學生社團報名</h2>", unsafe_allow_html=True)
 
-        # [註解] 讀取網址參數 (Query Params) 來防禦 F5 重新整理造成的登出
         qp = st.query_params
         q_cls = qp.get("c")
         q_seat = qp.get("s")
         q_v = qp.get("v")
 
-        # 如果網址告訴我們已經登入過了，自動恢復狀態
         if q_v == "1" and q_cls and q_seat:
             st.session_state.id_verified = True
             st.session_state.last_student = f"{q_cls}_{q_seat}"
 
         with st.container(border=True):
             c_grade, c_class, c_seat = st.columns(3)
-            # 動態找出預設的年級與班級索引
             default_grade_idx = 0
             if q_cls and str(q_cls).startswith("8"): default_grade_idx = 1
             elif q_cls and str(q_cls).startswith("9"): default_grade_idx = 2
@@ -721,7 +765,6 @@ elif page == "📝 學生報名":
 
         if sel_class and sel_seat:
             current_key = f"{sel_class}_{sel_seat}"
-            # 如果使用者切換了班級或座號，清除他的登入狀態和網址參數
             if st.session_state.last_student != current_key:
                 st.session_state.id_verified = False
                 st.session_state.last_student = current_key
@@ -736,7 +779,6 @@ elif page == "📝 學生報名":
                     if c_v2.form_submit_button("驗證", use_container_width=True):
                         if sid == str(row["學號"]):
                             st.session_state.id_verified = True
-                            # [註解] 將登入成功的狀態寫入網址，就算按 F5 也能活著
                             st.query_params["c"] = sel_class
                             st.query_params["s"] = sel_seat
                             st.query_params["v"] = "1"
@@ -752,6 +794,10 @@ elif page == "📝 學生報名":
                         st.query_params.clear()
                         st.rerun()
 
+                # [註解] 讀取學生的「鎖定社團」狀態
+                locked_club = str(row.get("鎖定社團", "")).strip()
+                is_locked_to_club = bool(locked_club and locked_club.lower() != "nan" and locked_club in config_data["clubs"])
+
                 admin_set_identity = row.get("身分", "一般生")
                 is_locked = (admin_set_identity == "校隊學生")
 
@@ -760,18 +806,22 @@ elif page == "📝 學生報名":
                 student_identity = c_id_sel.radio("身分", ["一般生", "校隊學生"], index=1 if is_locked else 0, disabled=is_locked, horizontal=True)
 
                 school_team_clubs = [c for c, data in config_data["clubs"].items() if "校隊" in str(data.get("category", ""))]
-                if student_identity == "校隊學生": st.warning(f"🏅 僅顯示校隊社團：{', '.join(school_team_clubs)}")
+                if student_identity == "校隊學生" and not is_locked_to_club:
+                    st.warning(f"🏅 僅顯示校隊社團：{', '.join(school_team_clubs)}")
 
-                clubs_to_show = []
-                for c, cfg in config_data["clubs"].items():
-                    is_team = "校隊" in str(cfg.get("category", ""))
-                    if student_identity == "校隊學生" and not is_team: continue
-                    clubs_to_show.append(c)
+                # [註解] 新增：如果學生被鎖定，介面就「只顯示」那一個社團
+                if is_locked_to_club:
+                    st.error(f"🔒 管理員已為您強制綁定：**{locked_club}**，您僅能選擇此社團。")
+                    clubs_to_show = [locked_club]
+                else:
+                    clubs_to_show = []
+                    for c, cfg in config_data["clubs"].items():
+                        is_team = "校隊" in str(cfg.get("category", ""))
+                        if student_identity == "校隊學生" and not is_team: continue
+                        clubs_to_show.append(c)
 
-                # [註解] 使用 Fragment 把這塊包起來，讓它每秒自己重新整理
                 @auto_refresh_fragment
                 def render_dynamic_clubs():
-                    # 每次執行都去拿有 cache 保護的最新資料
                     live = get_live_registrations()
                     my_reg = live[(live["班級"]==sel_class) & (live["座號"]==sel_seat)]
                     if not my_reg.empty: st.info(f"✅ 已報名：{my_reg.iloc[0]['社團']}")
@@ -797,7 +847,6 @@ elif page == "📝 學生報名":
                                         else:
                                             st.button("鎖定", key=f"btn_{c_name}", disabled=True, use_container_width=True)
                 
-                # 執行這個片段
                 render_dynamic_clubs()
     else: st.error("請先匯入學生名冊")
 
