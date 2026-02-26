@@ -13,7 +13,7 @@ import pytz
 # ==========================================
 # 0. 系統設定 (雲端相容模式)
 # ==========================================
-# [註解] 原有架構：雲端執行相容性檢查，保持不變
+# 檢查是否在 Streamlit 環境中執行，若無則自動啟動
 if __name__ == '__main__':
     try:
         from streamlit.runtime import exists
@@ -33,7 +33,7 @@ try:
     from PIL import Image, ImageDraw, ImageFont
     import openpyxl
 
-    # Word 相關
+    # Word 相關套件
     from docx.shared import Pt
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.enum.table import WD_TABLE_ALIGNMENT
@@ -48,7 +48,7 @@ except ImportError as e:
 # ==========================================
 # 1. 系統路徑與設定
 # ==========================================
-# [註解] 原有架構：Windows 絕對路徑處理，避免路徑錯誤，保持不變
+# 使用 os.path.join 處理 Windows 路徑，避免反斜線跳脫錯誤
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "club_config.json")
 REG_FILE = os.path.join(BASE_DIR, "club_registrations.csv")
@@ -60,6 +60,7 @@ if not os.path.exists(IMAGES_DIR):
 
 # --- 字型路徑搜尋 ---
 def get_chinese_font_path():
+    """尋找電腦或專案中可用的中文字型"""
     paths_to_try = [
         os.path.join(BASE_DIR, "custom_font.ttf"),
         os.path.join(os.getcwd(), "custom_font.ttf"),
@@ -77,7 +78,7 @@ def get_chinese_font_path():
 FONT_PATH = get_chinese_font_path()
 
 # ------------------------------------------
-# [核心 1] 社團名稱轉圖片 (原裝不動)
+# [核心 1] 社團名稱轉圖片
 # ------------------------------------------
 def generate_text_image(text):
     width, height = 400, 45
@@ -100,7 +101,7 @@ def generate_text_image(text):
     return img_byte_arr.getvalue()
 
 # ------------------------------------------
-# [核心 2] 步驟標題轉圖片 (原裝不動)
+# [核心 2] 步驟標題轉圖片
 # ------------------------------------------
 def generate_step_image(num, text):
     width, height = 350, 40
@@ -136,10 +137,12 @@ def generate_step_image(num, text):
     return img_byte_arr.getvalue()
 
 def get_taiwan_now():
+    """取得台灣目前時間"""
     tw_tz = pytz.timezone('Asia/Taipei')
     return datetime.now(tw_tz).replace(tzinfo=None)
 
 def load_config():
+    """讀取設定檔，如果沒有則回傳預設值"""
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -157,18 +160,20 @@ def load_config():
     }
 
 def save_config(config):
+    """將設定檔存成 json"""
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False, indent=4)
 
 config_data = load_config()
 
 def load_registrations():
+    """讀取報名資料"""
     if os.path.exists(REG_FILE):
         return pd.read_csv(REG_FILE, dtype={"班級": str, "座號": str})
     else:
         return pd.DataFrame(columns=["班級", "座號", "姓名", "社團", "報名時間", "狀態"])
 
-# [註解] 今日修改：防禦 300 人同時查詢的快取牆，生存時間設為 1 秒
+# 防禦 300 人同時查詢的快取牆，生存時間設為 1 秒
 @st.cache_data(ttl=1)
 def get_live_registrations():
     return load_registrations()
@@ -176,7 +181,7 @@ def get_live_registrations():
 reg_df = load_registrations()
 
 def load_students_with_identity():
-    # [註解] 今日修改：動態補齊「鎖定社團」欄位，兼容舊版 Excel
+    """載入學生名單並自動補齊缺失的欄位"""
     if not os.path.exists(STUDENT_LIST_FILE):
         return pd.DataFrame(columns=["班級", "座號", "姓名", "學號", "身分", "鎖定社團"])
     df = pd.read_excel(STUDENT_LIST_FILE, dtype={"班級": str, "座號": str, "學號": str, "鎖定社團": str})
@@ -197,8 +202,9 @@ def load_students_with_identity():
         df.to_excel(STUDENT_LIST_FILE, index=False)
     return df
 
-# --- [Word 生成函式] (原裝不動) ---
+# --- [Word 生成函式] ---
 def generate_merged_docx(data_dict):
+    """將資料轉換成 Word 格式"""
     doc = Document()
     style = doc.styles['Normal']
     style.font.name = '標楷體'
@@ -259,6 +265,7 @@ def generate_merged_docx(data_dict):
     return buffer.getvalue()
 
 def create_batch_zip(data_dict, file_type="Excel"):
+    """將多份 Excel 檔案打包成 ZIP"""
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for file_name, df in data_dict.items():
@@ -269,7 +276,7 @@ def create_batch_zip(data_dict, file_type="Excel"):
                 zf.writestr(f"{file_name}.xlsx", excel_buffer.getvalue())
     return zip_buffer.getvalue()
 
-# [註解] 今日修改：局部更新 Fragment 裝飾器
+# 局部更新 Fragment 裝飾器
 def get_fragment_decorator():
     if hasattr(st, "fragment"): return st.fragment(run_every=1)
     if hasattr(st, "experimental_fragment"): return st.experimental_fragment(run_every=1)
@@ -280,8 +287,9 @@ auto_refresh_fragment = get_fragment_decorator()
 # ==========================================
 # 2. 介面設定
 # ==========================================
+# [修改處] 這裡設定了瀏覽器頁籤的標題與 Icon
 try:
-    st.set_page_config(page_title="頂級社團報名系統 V18.36 最終版", page_icon="💎", layout="wide")
+    st.set_page_config(page_title="九如國中社團報名系統", page_icon="🏫", layout="wide")
 except:
     pass
 
@@ -304,7 +312,7 @@ def confirm_submission(sel_class, sel_seat, name, club):
     st.image(img_data, use_container_width=True)
     st.info("系統將在您按下按鈕的瞬間，再次確認剩餘名額。")
     if st.button("✅ 我確認無誤，送出報名", use_container_width=True, type="primary"):
-        # [註解] 關鍵安全防護：防超賣，同時確保寫入後清空快取
+        # 關鍵安全防護：防超賣，同時確保寫入後清空快取
         current_df = load_registrations()
         if not current_df[(current_df["班級"] == sel_class) & (current_df["座號"] == sel_seat)].empty:
             st.error("⚠️ 寫入失敗：系統發現您剛剛已經完成報名了！")
@@ -355,6 +363,7 @@ def confirm_factory_reset():
         st.success("✅ 系統已重置！"); time.sleep(2); st.rerun()
 
 def render_health_bar(limit, current):
+    """繪製名額血條"""
     remain = limit - current
     blocks_html = ""
     for i in range(limit):
@@ -445,7 +454,6 @@ def admin_batch_update_identity(selected_rows, new_identity):
         all_std.to_excel(STUDENT_LIST_FILE, index=False)
         st.toast(f"✅ 更新 {mask.sum()} 人為 {new_identity}", icon="🏷️"); time.sleep(1); st.rerun()
 
-# [註解] 今日修改：負責寫入 Excel 鎖定狀態的新功能
 def admin_batch_update_locked_club(selected_rows, target_club, action="lock"):
     all_std = load_students_with_identity()
     targets = set((r['班級'], r['座號']) for r in selected_rows)
@@ -599,7 +607,7 @@ if page == "🛠️ 管理員後台":
                         o_s = tc2.text_input("舊座號")
                         n_c_t = tc1.text_input("新班級")
                         n_s_t = tc2.text_input("新座號")
-                        if st.form_submit_button("執行異動", use_container_width=True):
+                        if st.form_submit_button("執行異形", use_container_width=True):
                             if o_c and o_s and n_c_t and n_s_t: admin_transfer_student(o_c, o_s.zfill(2), n_c_t, n_s_t.zfill(2))
                             else: st.error("欄位不全")
             
@@ -686,7 +694,6 @@ if page == "🛠️ 管理員後台":
             with c_content:
                 tab_dl_cls, tab_dl_club = st.tabs(["🏫 按班級列印", "🏆 按社團列印"])
                 
-                # [註解] 今日修改：修復下載按鈕放在 if st.button 裡會消失的 Bug
                 with tab_dl_cls:
                     if not df.empty:
                         all_cls = sorted(df["班級"].unique())
@@ -738,7 +745,6 @@ elif page == "📝 學生報名":
 
         st.markdown("<h2 style='text-align: center; color: #1E3A8A;'>📝 學生社團報名</h2>", unsafe_allow_html=True)
 
-        # [註解] 今日修改：利用 Query Params 防止重新整理(F5)被登出
         qp = st.query_params
         q_cls = qp.get("c")
         q_seat = qp.get("s")
@@ -798,7 +804,6 @@ elif page == "📝 學生報名":
                         st.query_params.clear()
                         st.rerun()
 
-                # [註解] 今日修改：偵測並套用學生被「強制鎖定」的社團
                 locked_club = str(row.get("鎖定社團", "")).strip()
                 is_locked_to_club = bool(locked_club and locked_club.lower() != "nan" and locked_club in config_data["clubs"])
 
@@ -823,7 +828,6 @@ elif page == "📝 學生報名":
                         if student_identity == "校隊學生" and not is_team: continue
                         clubs_to_show.append(c)
 
-                # [註解] 今日修改：使用 Fragment 達到每秒局部刷新的無痛體驗
                 @auto_refresh_fragment
                 def render_dynamic_clubs():
                     live = get_live_registrations()
