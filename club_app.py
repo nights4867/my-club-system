@@ -57,10 +57,10 @@ IMAGES_DIR = os.path.join(BASE_DIR, "club_images")
 if not os.path.exists(IMAGES_DIR):
     os.makedirs(IMAGES_DIR)
 
-# --- [核彈級修復 V6.1] 字型智慧載入器 ---
+# --- [核彈級修復 V6] 字型偽裝破解器 ---
 @st.cache_resource
 def get_and_register_font():
-    """智慧字型載入器：優先使用 custom_font.ttf，具備自動備援與 TTC 破解"""
+    """智慧字型載入器：破解改名 TTC，並具備網路備援"""
     target_font_name = "custom_font.ttf"
     target_font_path = os.path.join(BASE_DIR, target_font_name)
     fallback_font_path = os.path.join(BASE_DIR, "TaipeiSans.ttf")
@@ -70,21 +70,20 @@ def get_and_register_font():
     # 策略 1：嘗試讀取使用者上傳的 custom_font.ttf
     if os.path.exists(target_font_path) and os.path.getsize(target_font_path) > 100000:
         try:
-            # 先嘗試標準註冊
+            # 先當作正常 TTF 讀取
             pdfmetrics.registerFont(TTFont('MyChineseFont', target_font_path))
-            return 'MyChineseFont', target_font_path, "✅ 成功讀取上傳的 custom_font.ttf"
+            return 'MyChineseFont', target_font_path, "✅ 成功讀取上傳的 custom_font.ttf (標準格式)"
         except Exception as e1:
             try:
-                # 破解：處理偽裝成 TTF 的 TTC 檔案
+                # 破解：可能骨子裡是 TTC 卻被改名為 TTF
                 pdfmetrics.registerFont(TTFont('MyChineseFont', target_font_path, subfontIndex=0))
-                return 'MyChineseFont', target_font_path, "✅ 成功讀取上傳的 custom_font.ttf (TTC 模式)"
+                return 'MyChineseFont', target_font_path, "✅ 成功讀取上傳的 custom_font.ttf (已破解 TTC 偽裝)"
             except Exception as e2:
-                font_status_msg = f"⚠️ custom_font.ttf 無法解析: {e2}"
+                font_status_msg = f"⚠️ 上傳的字型損壞或無法解析。錯誤碼: {e2}"
 
-    # 策略 2：如果 custom_font.ttf 失敗，嘗試使用備援字型
+    # 策略 2：如果上傳的檔案無效，啟動網路備援下載台北黑體
     try:
         if not os.path.exists(fallback_font_path):
-            # 從 GitHub 下載台北黑體作為備援
             url = "https://raw.githubusercontent.com/Kanjou/Taipei-Sans-TC/master/TaipeiSansTCBeta-Regular.ttf"
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'} )
             with urllib.request.urlopen(req) as response, open(fallback_font_path, 'wb') as out_file:
@@ -92,11 +91,11 @@ def get_and_register_font():
         
         if os.path.exists(fallback_font_path):
             pdfmetrics.registerFont(TTFont('MyChineseFont', fallback_font_path))
-            return 'MyChineseFont', fallback_font_path, f"{font_status_msg} ➡️ 已啟用備援字型 (台北黑體)"
+            return 'MyChineseFont', fallback_font_path, f"{font_status_msg} ➡️ 已自動啟用備用雲端字型 (台北黑體)"
     except Exception as e:
-        return 'Helvetica', None, f"❌ 字型載入失敗: {e}"
+        return 'Helvetica', None, f"❌ 所有字型載入皆失敗，PDF 將出現黑方塊。錯誤: {e}"
 
-    return 'Helvetica', None, "❌ 找不到可用字型，請上傳 custom_font.ttf 到專案根目錄"
+    return 'Helvetica', None, "❌ 找不到任何可用字型"
 
 # 執行字型準備
 CURRENT_FONT_NAME, CURRENT_FONT_PATH, FONT_STATUS_MSG = get_and_register_font()
@@ -209,7 +208,7 @@ def load_students_with_identity():
     return df
 
 # --- [PDF 生成] ---
-def generate_merged_pdf(data_map):
+def generate_merged_pdf(data_dict):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4)
     elements = []
@@ -222,9 +221,9 @@ def generate_merged_pdf(data_map):
         'Normal', parent=styles['Normal'], fontName=CURRENT_FONT_NAME, fontSize=10
     )
 
-    keys = list(data_map.keys())
+    keys = list(data_dict.keys())
     for i, title in enumerate(keys):
-        df = data_map[title]
+        df = data_dict[title]
         elements.append(Paragraph(title, title_style))
         elements.append(Paragraph(f"列印時間: {datetime.now().strftime('%Y-%m-%d %H:%M')}", normal_style))
         elements.append(Spacer(1, 10))
@@ -248,10 +247,10 @@ def generate_merged_pdf(data_map):
     doc.build(elements)
     return buffer.getvalue()
 
-def create_batch_zip(data_map, file_type="Excel"):
+def create_batch_zip(data_dict, file_type="Excel"):
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for file_name, df in data_map.items():
+        for file_name, df in data_dict.items():
             if file_type == "Excel":
                 excel_buffer = io.BytesIO()
                 with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
