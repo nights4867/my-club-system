@@ -9,6 +9,7 @@ import pandas as pd
 import zipfile 
 from datetime import datetime
 import pytz 
+import urllib.request 
 
 # ==========================================
 # 0. 系統設定 (雲端相容模式)
@@ -32,7 +33,6 @@ try:
     from PIL import Image, ImageDraw, ImageFont
     import openpyxl 
     
-    # PDF 相關
     from reportlab.pdfgen import canvas
     from reportlab.lib.pagesizes import A4
     from reportlab.pdfbase import pdfmetrics
@@ -43,7 +43,6 @@ try:
 
 except ImportError as e:
     st.error(f"⚠️ 系統缺少必要套件：{e}")
-    st.info("請確認 requirements.txt 包含：python-docx, Pillow, openpyxl, reportlab")
     st.stop()
 
 # ==========================================
@@ -58,30 +57,48 @@ IMAGES_DIR = os.path.join(BASE_DIR, "club_images")
 if not os.path.exists(IMAGES_DIR):
     os.makedirs(IMAGES_DIR)
 
-# --- [終極修復 V4] 強制指定單一 TTF 檔案 ---
-def register_and_get_font():
-    """註冊中文字型，回傳成功註冊的字型名稱，失敗則回傳 Helvetica"""
-    # 我們只尋找最穩定的純 .ttf 檔案
+# --- [核彈級修復 V6] 字型偽裝破解器 ---
+@st.cache_resource
+def get_and_register_font():
+    """智慧字型載入器：破解改名 TTC，並具備網路備援"""
     target_font_name = "custom_font.ttf"
     target_font_path = os.path.join(BASE_DIR, target_font_name)
+    fallback_font_path = os.path.join(BASE_DIR, "TaipeiSans.ttf")
     
-    # 備用路徑 (供本機 Windows 開發測試用)
-    fallback_windows_path = "C:\\Windows\\Fonts\\kaiu.ttf"
+    font_status_msg = ""
 
-    try:
-        if os.path.exists(target_font_path):
+    # 策略 1：嘗試讀取使用者上傳的 custom_font.ttf
+    if os.path.exists(target_font_path) and os.path.getsize(target_font_path) > 100000:
+        try:
+            # 先當作正常 TTF 讀取
             pdfmetrics.registerFont(TTFont('MyChineseFont', target_font_path))
-            return 'MyChineseFont', target_font_path
-        elif os.path.exists(fallback_windows_path):
-            pdfmetrics.registerFont(TTFont('MyChineseFont', fallback_windows_path))
-            return 'MyChineseFont', fallback_windows_path
-    except Exception as e:
-        print(f"字型註冊失敗: {e}")
-        
-    return 'Helvetica', None
+            return 'MyChineseFont', target_font_path, "✅ 成功讀取上傳的 custom_font.ttf (標準格式)"
+        except Exception as e1:
+            try:
+                # 破解：可能骨子裡是 TTC 卻被改名為 TTF
+                pdfmetrics.registerFont(TTFont('MyChineseFont', target_font_path, subfontIndex=0))
+                return 'MyChineseFont', target_font_path, "✅ 成功讀取上傳的 custom_font.ttf (已破解 TTC 偽裝)"
+            except Exception as e2:
+                font_status_msg = f"⚠️ 上傳的字型損壞或無法解析。錯誤碼: {e2}"
 
-# 取得可用字型名稱與路徑
-CURRENT_FONT_NAME, CURRENT_FONT_PATH = register_and_get_font()
+    # 策略 2：如果上傳的檔案無效，啟動網路備援下載台北黑體
+    try:
+        if not os.path.exists(fallback_font_path):
+            url = "https://raw.githubusercontent.com/Kanjou/Taipei-Sans-TC/master/TaipeiSansTCBeta-Regular.ttf"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req) as response, open(fallback_font_path, 'wb') as out_file:
+                out_file.write(response.read())
+        
+        if os.path.exists(fallback_font_path):
+            pdfmetrics.registerFont(TTFont('MyChineseFont', fallback_font_path))
+            return 'MyChineseFont', fallback_font_path, f"{font_status_msg} ➡️ 已自動啟用備用雲端字型 (台北黑體)"
+    except Exception as e:
+        return 'Helvetica', None, f"❌ 所有字型載入皆失敗，PDF 將出現黑方塊。錯誤: {e}"
+
+    return 'Helvetica', None, "❌ 找不到任何可用字型"
+
+# 執行字型準備
+CURRENT_FONT_NAME, CURRENT_FONT_PATH, FONT_STATUS_MSG = get_and_register_font()
 
 # ------------------------------------------
 # [核心 1] 社團名稱轉圖片
@@ -193,12 +210,10 @@ def load_students_with_identity():
 # --- [PDF 生成] ---
 def generate_merged_pdf(data_dict):
     buffer = io.BytesIO()
-    
     doc = SimpleDocTemplate(buffer, pagesize=A4)
     elements = []
     styles = getSampleStyleSheet()
     
-    # 確保使用我們註冊好的字型名稱 (MyChineseFont 或是 Helvetica)
     title_style = ParagraphStyle(
         'Title', parent=styles['Heading1'], fontName=CURRENT_FONT_NAME, fontSize=18, alignment=1, spaceAfter=20
     )
@@ -247,7 +262,7 @@ def create_batch_zip(data_dict, file_type="Excel"):
 # 2. 介面設定
 # ==========================================
 try:
-    st.set_page_config(page_title="頂級社團報名系統 V18.38", page_icon="💎", layout="wide")
+    st.set_page_config(page_title="頂級社團報名系統 V18.40", page_icon="💎", layout="wide")
 except:
     pass
 
@@ -661,27 +676,16 @@ if page == "🛠️ 管理員後台":
         with tab_export:
             st.subheader("🖨️ 批次列印與下載中心")
             
-            # --- [新增] 字型狀態監控面板 ---
-            if CURRENT_FONT_NAME == 'Helvetica':
-                st.error("⚠️ **嚴重警告：系統找不到中文字型檔！**")
-                st.markdown("""
-                請務必完成以下操作，否則下載的 PDF 會出現黑方塊：
-                1. 準備一個純字型檔 (例如從電腦複製 `C:\\Windows\\Fonts\\kaiu.ttf`)。
-                2. 將檔案改名為 **`custom_font.ttf`**。
-                3. 將該檔案上傳至您的 GitHub 專案中 (與 `club_app.py` 放一起)。
-                4. 回到此網頁，點擊右上角重啟 (Reboot App)。
-                """)
+            # 顯示字型狀態，讓你一眼看出成功還是失敗
+            if CURRENT_FONT_NAME != 'Helvetica':
+                st.info(f"{FONT_STATUS_MSG}")
             else:
-                st.success(f"✅ 字型載入成功！目前使用字型：`{CURRENT_FONT_NAME}`。PDF 可正常顯示中文。")
-            
+                st.error(f"{FONT_STATUS_MSG}")
+
             c_type, c_content = st.columns([1, 3])
             with c_type:
                 st.info("選擇格式")
-                # 如果沒有字型，把 PDF 選項拔掉，避免印出廢紙
-                if CURRENT_FONT_NAME == 'Helvetica':
-                    fmt = st.radio("格式", ["Excel (ZIP壓縮)"], label_visibility="collapsed")
-                else:
-                    fmt = st.radio("格式", ["PDF (合併列印)", "Excel (ZIP壓縮)"], label_visibility="collapsed")
+                fmt = st.radio("格式", ["PDF (合併列印)", "Excel (ZIP壓縮)"], label_visibility="collapsed")
             
             with c_content:
                 tab_dl_cls, tab_dl_club = st.tabs(["🏫 按班級列印", "🏆 按社團列印"])
