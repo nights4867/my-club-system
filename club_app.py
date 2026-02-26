@@ -9,6 +9,7 @@ import pandas as pd
 import zipfile 
 from datetime import datetime
 import pytz 
+import urllib.request 
 
 # ==========================================
 # 0. 系統設定 (雲端相容模式)
@@ -29,12 +30,15 @@ if __name__ == '__main__':
 # 嘗試匯入必要套件
 try:
     from docx import Document
+    from PIL import Image, ImageDraw, ImageFont
+    import openpyxl 
+    
     from docx.shared import Pt, Cm, RGBColor
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.enum.table import WD_TABLE_ALIGNMENT
     from docx.oxml.ns import qn
-    from PIL import Image, ImageDraw, ImageFont
-    import openpyxl
+    from docx.oxml import OxmlElement
+
 except ImportError as e:
     st.error(f"⚠️ 系統缺少必要套件：{e}")
     st.stop()
@@ -51,10 +55,15 @@ IMAGES_DIR = os.path.join(BASE_DIR, "club_images")
 if not os.path.exists(IMAGES_DIR):
     os.makedirs(IMAGES_DIR)
 
-# --- 字型路徑設定 (僅用於圖片生成) ---
-CURRENT_FONT_PATH = os.path.join(BASE_DIR, "custom_font.ttf")
-if not os.path.exists(CURRENT_FONT_PATH):
-    CURRENT_FONT_PATH = None
+# --- 字型路徑設定 (用於圖片生成) ---
+def get_font_path():
+    """取得字型路徑，供圖片生成使用"""
+    target_font_path = os.path.join(BASE_DIR, "custom_font.ttf")
+    if os.path.exists(target_font_path) and os.path.getsize(target_font_path) > 100:
+        return target_font_path
+    return None
+
+CURRENT_FONT_PATH = get_font_path()
 
 # ------------------------------------------
 # [核心 1] 社團名稱轉圖片
@@ -210,7 +219,6 @@ def generate_merged_docx(data_dict):
             run.font.name = '標楷體'
             run._element.rPr.rFonts.set(qn('w:eastAsia'), '標楷體')
             # 表頭灰色背景
-            from docx.oxml import OxmlElement
             shading = OxmlElement('w:shd')
             shading.set(qn('w:fill'), 'D9D9D9')
             cell._element.get_or_add_tcPr().append(shading)
