@@ -5,3 +5,6 @@ openpyxl
 Pillow
 fpdf2
 reportlab
+pytz
+
+
