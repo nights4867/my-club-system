@@ -1,38 +1,3 @@
-
-
-協作
-
-分享
-pasted_content.txt
-文字 · 43.48 KB
-PDF 下載之後出現亂碼，目前已經上傳了 標楷體字體custom_font.ttf，我希望在不改變其他所有架構的前提下，只要能調整 PDF 檔，讓它確實可以下載標楷體即可。
-Max
-收到！我先查看您的 club_app.py 程式碼，找出 PDF 生成的部分，然後修改讓它正確使用 custom_font.ttf 標楷體字體。
-已閱讀完整程式碼，PDF生成邏輯涉及字型路徑。下一步將定位字型載入部分，修正為正確使用 custom_font.ttf。
-
-已確認程式碼段與字型載入相關部分，打算修正載入路徑，確保正確使用 custom_font.ttf 字體，解決 PDF 亂碼問題。
-
-Max
-我已經完整閱讀了您的程式碼，問題已經定位清楚了。
-問題根源： 在 get_chinese_font_path() 函式（第 62-75 行）中，搜尋字型的路徑清單裡只列了 kaiu.ttf、msjh.ttc、simhei.ttf 等檔名，但您上傳的字體檔案名稱是 custom_font.ttf。由於在 Streamlit Cloud 雲端環境中不存在 Windows 字型路徑，函式找不到任何字型，導致 FONT_PATH 為 None，PDF 就會使用不支援中文的 Helvetica，造成亂碼。
-修正方案： 只需在 get_chinese_font_path() 的 paths_to_try 清單中，加入 custom_font.ttf 的路徑即可。我現在就幫您準備修改後的程式碼。
-已將 `get_chinese_font_path()` 中的字型清單前方加入自訂字體 `custom_font.ttf`，確保正確載入字型，解決 PDF 亂碼問題。下一步確認修改效果。
-
-已加入自訂字體路徑，確保正確載入標楷體，接著驗證修改效果並調整 PDF 字型設定。
-
-Max
-好的，我已經將您的 club_app.py 檔案修改完成。唯一的變動是在第 66 行加入了 custom_font.ttf 的路徑，並調整了註解，使其優先被讀取。其他邏輯都保持原樣。
-您現在可以下載附件中的 club_app.py 檔案，替換掉您原本的檔案，這樣 PDF 應該就能正常顯示標楷體了。
-club_app.py
-程式碼 · 42.77 KB
-查看此任務中的所有檔案
-任務已完成
-這個結果怎麼樣？
-建議追問
-
-
-
-club_app.py
 import streamlit as st
 import sys
 import os
