@@ -9,7 +9,7 @@ import pandas as pd
 import zipfile 
 from datetime import datetime
 import pytz 
-import urllib.request # [新增] 用於自動下載網路字型
+import urllib.request 
 
 # ==========================================
 # 0. 系統設定 (雲端相容模式)
@@ -59,10 +59,9 @@ IMAGES_DIR = os.path.join(BASE_DIR, "club_images")
 if not os.path.exists(IMAGES_DIR):
     os.makedirs(IMAGES_DIR)
 
-# --- [核彈級修復] 自動下載中文字型功能 ---
-@st.cache_resource
+# --- [核彈級修復 V2] 移除 cache 裝飾器，背景靜默下載 ---
 def get_chinese_font_path():
-    """尋找或自動下載中文字型 (專治雲端黑方塊)"""
+    """尋找或自動下載中文字型 (安靜模式，避免雲端崩潰)"""
     cloud_font_name = "cloud_chinese_font.ttf"
     cloud_font_path = os.path.join(BASE_DIR, cloud_font_name)
 
@@ -74,23 +73,21 @@ def get_chinese_font_path():
         "C:\\Windows\\Fonts\\kaiu.ttf",  # Windows 標楷體
         "C:\\Windows\\Fonts\\msjh.ttc"   # Windows 微軟正黑體
     ]
+    
     for p in paths_to_try:
         if os.path.exists(p):
             return p
 
-    # 2. 如果都找不到 (代表在雲端且沒上傳)，自動從穩定的開源庫下載黑體字型
+    # 2. 如果都找不到，在背景默默下載
     try:
-        st.toast("☁️ 雲端首次執行：正在自動下載中文字型檔，請稍候幾秒鐘...", icon="⏳")
-        # 提供一個穩定的開源中文字型 (SimHei TTF) 下載連結
         font_url = "https://raw.githubusercontent.com/hustcc/canvas-nest.js/master/test/simhei.ttf"
         urllib.request.urlretrieve(font_url, cloud_font_path)
-        st.toast("✅ 字型下載完成！PDF 將可正常顯示中文。", icon="🎉")
         return cloud_font_path
     except Exception as e:
         print(f"字型下載失敗: {e}")
         return None
 
-# 取得全域字型路徑
+# 取得全域字型路徑 (啟動時只會執行一次)
 FONT_PATH = get_chinese_font_path()
 
 # ------------------------------------------
@@ -200,7 +197,7 @@ def load_students_with_identity():
     df["身分"] = df["身分"].fillna("一般生")
     return df
 
-# --- [修改重點] PDF 生成 (套用下載好的中文字型) ---
+# --- [修改重點] PDF 生成 ---
 def generate_merged_pdf(data_dict):
     buffer = io.BytesIO()
     
@@ -208,7 +205,6 @@ def generate_merged_pdf(data_dict):
     
     if FONT_PATH and os.path.exists(FONT_PATH):
         try:
-            # 註冊中文字型給 PDF 引擎使用
             pdfmetrics.registerFont(TTFont('MyChineseFont', FONT_PATH))
             font_name = 'MyChineseFont'
         except Exception as e:
@@ -218,7 +214,6 @@ def generate_merged_pdf(data_dict):
     elements = []
     styles = getSampleStyleSheet()
     
-    # 建立標題與內文樣式
     title_style = ParagraphStyle(
         'Title', parent=styles['Heading1'], fontName=font_name, fontSize=18, alignment=1, spaceAfter=20
     )
@@ -236,9 +231,8 @@ def generate_merged_pdf(data_dict):
         table_data = [df.columns.tolist()] + df.values.tolist()
         table = Table(table_data)
         
-        # 設定表格樣式，包含字體
         table.setStyle(TableStyle([
-            ('FONTNAME', (0, 0), (-1, -1), font_name), # 確保表格內文使用中文字型
+            ('FONTNAME', (0, 0), (-1, -1), font_name), 
             ('FONTSIZE', (0, 0), (-1, -1), 10),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
@@ -268,7 +262,7 @@ def create_batch_zip(data_dict, file_type="Excel"):
 # 2. 介面設定
 # ==========================================
 try:
-    st.set_page_config(page_title="頂級社團報名系統 V18.35", page_icon="💎", layout="wide")
+    st.set_page_config(page_title="頂級社團報名系統 V18.36", page_icon="💎", layout="wide")
 except:
     pass
 
@@ -338,7 +332,6 @@ def confirm_factory_reset():
         with open(CONFIG_FILE, "w", encoding="utf-8") as f: json.dump(default_config, f, ensure_ascii=False, indent=4)
         st.success("✅ 系統已重置！"); time.sleep(2); st.rerun()
 
-# --- 血條渲染函數 (固定方格 + 自動換行) ---
 def render_health_bar(limit, current):
     remain = limit - current
     blocks_html = ""
@@ -356,7 +349,6 @@ def render_health_bar(limit, current):
     """
     return container_html
 
-# --- 管理員邏輯 ---
 def admin_batch_action(action, selected_rows, target_club=None):
     current_df = load_registrations()
     targets = set((r['班級'], r['座號']) for r in selected_rows)
@@ -687,12 +679,8 @@ if page == "🛠️ 管理員後台":
             c_type, c_content = st.columns([1, 3])
             with c_type:
                 st.info("選擇格式")
-                # 解決格式選擇的問題，如果沒找到字型就隱藏 PDF 避免錯誤
-                if FONT_PATH is None:
-                    st.error("⚠️ 雲端缺少字型，已禁用 PDF 下載")
-                    fmt = st.radio("格式", ["Excel (ZIP壓縮)"], label_visibility="collapsed")
-                else:
-                    fmt = st.radio("格式", ["PDF (合併列印)", "Excel (ZIP壓縮)"], label_visibility="collapsed")
+                # 如果找不到字型，會自動去抓，所以可以直接開放
+                fmt = st.radio("格式", ["PDF (合併列印)", "Excel (ZIP壓縮)"], label_visibility="collapsed")
             
             with c_content:
                 tab_dl_cls, tab_dl_club = st.tabs(["🏫 按班級列印", "🏆 按社團列印"])
@@ -798,36 +786,41 @@ elif page == "📝 學生報名":
                 school_team_clubs = [c for c, data in config_data["clubs"].items() if "校隊" in str(data.get("category", ""))]
                 if student_identity == "校隊學生": st.warning(f"🏅 僅顯示校隊社團：{', '.join(school_team_clubs)}")
 
-                live = load_registrations()
-                my_reg = live[(live["班級"]==sel_class) & (live["座號"]==sel_seat)]
-                if not my_reg.empty: st.info(f"✅ 已報名：{my_reg.iloc[0]['社團']}")
+                # 局部刷新區塊 (3秒自動更新)
+                @st.fragment(run_every=3)
+                def show_clubs(filter_identity):
+                    live = load_registrations()
+                    my_reg = live[(live["班級"]==sel_class) & (live["座號"]==sel_seat)]
+                    if not my_reg.empty: st.info(f"✅ 您已報名：{my_reg.iloc[0]['社團']}")
 
-                clubs_to_show = []
-                for c, cfg in config_data["clubs"].items():
-                    is_team = "校隊" in str(cfg.get("category", ""))
-                    if student_identity == "校隊學生" and not is_team: continue
-                    clubs_to_show.append(c)
-                
-                for i in range(0, len(clubs_to_show), 2):
-                    cols = st.columns(2)
-                    for j in range(2):
-                        if i + j < len(clubs_to_show):
-                            c_name = clubs_to_show[i+j]
-                            cfg = config_data["clubs"][c_name]
-                            with cols[j].container(border=True):
-                                current = len(live[live["社團"]==c_name])
-                                limit = cfg["limit"]
-                                st.write(f"**{c_name}** ({cfg.get('category','')})")
-                                st.markdown(render_health_bar(limit, current), unsafe_allow_html=True)
-                                if current >= limit: st.button("已滿", key=f"btn_{c_name}", disabled=True, use_container_width=True)
-                                else:
-                                    if my_reg.empty:
-                                        if st.button("報名", key=f"btn_{c_name}", type="primary", use_container_width=True):
-                                            confirm_submission(sel_class, sel_seat, row['姓名'], c_name)
-                                    elif my_reg.iloc[0]['社團'] == c_name:
-                                        st.button("✅ 已選", key=f"btn_{c_name}", disabled=True, use_container_width=True)
+                    clubs_to_show = []
+                    for c, cfg in config_data["clubs"].items():
+                        is_team = "校隊" in str(cfg.get("category", ""))
+                        if filter_identity == "校隊學生" and not is_team: continue
+                        clubs_to_show.append(c)
+                    
+                    for i in range(0, len(clubs_to_show), 2):
+                        cols = st.columns(2)
+                        for j in range(2):
+                            if i + j < len(clubs_to_show):
+                                c_name = clubs_to_show[i+j]
+                                cfg = config_data["clubs"][c_name]
+                                with cols[j].container(border=True):
+                                    current = len(live[live["社團"]==c_name])
+                                    limit = cfg["limit"]
+                                    st.write(f"**{c_name}** ({cfg.get('category','')})")
+                                    st.markdown(render_health_bar(limit, current), unsafe_allow_html=True)
+                                    if current >= limit: st.button("已滿", key=f"btn_{c_name}", disabled=True, use_container_width=True)
                                     else:
-                                        st.button("鎖定", key=f"btn_{c_name}", disabled=True, use_container_width=True)
+                                        if my_reg.empty:
+                                            if st.button("報名", key=f"btn_{c_name}", type="primary", use_container_width=True):
+                                                confirm_submission(sel_class, sel_seat, row['姓名'], c_name)
+                                        elif my_reg.iloc[0]['社團'] == c_name:
+                                            st.button("✅ 已選", key=f"btn_{c_name}", disabled=True, use_container_width=True)
+                                        else:
+                                            st.button("鎖定", key=f"btn_{c_name}", disabled=True, use_container_width=True)
+                
+                show_clubs(student_identity)
     else: st.error("請先匯入學生名冊")
 
 elif page == "🔍 查詢報名":
