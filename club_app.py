@@ -6,9 +6,9 @@ import io
 import json
 import re
 import pandas as pd
-import zipfile 
+import zipfile
 from datetime import datetime
-import pytz 
+import pytz
 
 # ==========================================
 # 0. 系統設定 (雲端相容模式)
@@ -30,8 +30,8 @@ if __name__ == '__main__':
 try:
     from docx import Document
     from PIL import Image, ImageDraw, ImageFont
-    import openpyxl 
-    
+    import openpyxl
+
     # PDF 相關
     from reportlab.pdfgen import canvas
     from reportlab.lib.pagesizes import A4
@@ -58,42 +58,40 @@ IMAGES_DIR = os.path.join(BASE_DIR, "club_images")
 if not os.path.exists(IMAGES_DIR):
     os.makedirs(IMAGES_DIR)
 
-# --- [修改重點 1] 超級字型雷達 (解決黑方塊問題) ---
-def get_chinese_font_path():
-    """尋找電腦或專案中可用的中文字型"""
-    # 建立一個清單，優先順序：專案資料夾內 > Windows 標楷體 > Windows 微軟正黑體
-    paths_to_try = [
-        os.path.join(BASE_DIR, "custom_font.ttf"), # 雲端備用：自帶標楷體 (已上傳)
-        os.path.join(BASE_DIR, "kaiu.ttf"),      # 雲端備用：自帶標楷體
-        os.path.join(BASE_DIR, "msjh.ttc"),      # 雲端備用：自帶正黑體
-        "C:\\Windows\\Fonts\\kaiu.ttf",          # 本機 Windows 標楷體 (純TTF，ReportLab 最愛)
-        "C:\\Windows\\Fonts\\msjh.ttc",          # 本機 Windows 微軟正黑體
-        "C:\\Windows\\Fonts\\simhei.ttf"         # 本機 Windows 黑體
+# --- [修改] 移除全域 FONT_PATH，改為在函式內動態尋找 ---
+
+def find_font_path_dynamically():
+    """在函式執行當下動態尋找字型，更穩健"""
+    font_search_paths = [
+        os.path.join(BASE_DIR, "custom_font.ttf"),
+        os.path.join(os.getcwd(), "custom_font.ttf"),
+        "custom_font.ttf",
+        os.path.join(BASE_DIR, "kaiu.ttf"),
+        "C:\\Windows\\Fonts\\kaiu.ttf",
+        "C:\\Windows\\Fonts\\msjh.ttc",
     ]
-    for p in paths_to_try:
-        if os.path.exists(p):
-            return p
+    for fp in font_search_paths:
+        if os.path.exists(fp) and os.path.getsize(fp) > 0:
+            return fp
     return None
 
-# 全域字型路徑
-FONT_PATH = get_chinese_font_path()
-
 # ------------------------------------------
-# [核心 1] 社團名稱轉圖片
+# [核心 1] 社團名稱轉圖片 (已修改)
 # ------------------------------------------
 def generate_text_image(text):
-    width, height = 400, 45 
-    background_color = (255, 255, 255) 
-    text_color = (30, 58, 138) 
+    width, height = 400, 45
+    background_color = (255, 255, 255)
+    text_color = (30, 58, 138)
     img = Image.new('RGB', (width, height), color=background_color)
     draw = ImageDraw.Draw(img)
+    font = ImageFont.load_default() # 預設字型
     try:
-        if FONT_PATH:
-            font = ImageFont.truetype(FONT_PATH, 24)
-        else:
-            font = ImageFont.load_default()
-    except: font = ImageFont.load_default()
-    
+        font_path = find_font_path_dynamically()
+        if font_path:
+            font = ImageFont.truetype(font_path, 24)
+    except Exception as e:
+        st.sidebar.error(f"圖片字型錯誤: {e}")
+
     bbox = draw.textbbox((0, 0), text, font=font)
     text_h = bbox[3] - bbox[1]
     draw.text((5, (height - text_h) / 2 - 3), text, fill=text_color, font=font)
@@ -102,25 +100,24 @@ def generate_text_image(text):
     return img_byte_arr.getvalue()
 
 # ------------------------------------------
-# [核心 2] 步驟標題轉圖片
+# [核心 2] 步驟標題轉圖片 (已修改)
 # ------------------------------------------
 def generate_step_image(num, text):
     width, height = 350, 40
     bg_color = (255, 255, 255)
-    box_color = (0, 120, 212) 
+    box_color = (0, 120, 212)
     text_color = (50, 50, 50)
     img = Image.new('RGB', (width, height), color=bg_color)
     draw = ImageDraw.Draw(img)
+    font_num = ImageFont.load_default()
+    font_text = ImageFont.load_default()
     try:
-        if FONT_PATH:
-            font_num = ImageFont.truetype(FONT_PATH, 22) 
-            font_text = ImageFont.truetype(FONT_PATH, 24) 
-        else:
-            font_num = ImageFont.load_default()
-            font_text = ImageFont.load_default()
-    except:
-        font_num = ImageFont.load_default()
-        font_text = ImageFont.load_default()
+        font_path = find_font_path_dynamically()
+        if font_path:
+            font_num = ImageFont.truetype(font_path, 22)
+            font_text = ImageFont.truetype(font_path, 24)
+    except Exception as e:
+        st.sidebar.error(f"步驟圖字型錯誤: {e}")
 
     box_size = 32
     box_x, box_y = 0, (height - box_size) // 2
@@ -147,7 +144,6 @@ def load_config():
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            # 確保欄位存在
             for c in data.get("clubs", {}):
                 if "category" not in data["clubs"][c]: data["clubs"][c]["category"] = "綜合"
             if "start_time" not in data: data["start_time"] = "2026-02-09 08:00:00"
@@ -155,7 +151,7 @@ def load_config():
             if "admin_password" not in data: data["admin_password"] = "0000"
             return data
     return {
-        "clubs": {"極地探險社": {"limit": 30, "category": "體育"}}, 
+        "clubs": {"極地探險社": {"limit": 30, "category": "體育"}},
         "start_time": "2026-02-09 08:00:00",
         "end_time": "2026-02-09 17:00:00",
         "admin_password": "0000"
@@ -186,33 +182,35 @@ def load_students_with_identity():
     df["身分"] = df["身分"].fillna("一般生")
     return df
 
-# --- [修改重點 2] PDF 生成 (套用超級字型雷達) ---
+# --- [最終修正] PDF 生成函式 ---
 def generate_merged_pdf(data_dict):
     buffer = io.BytesIO()
-    
-    font_name = 'Helvetica' # 預設為不支援中文的安全牌
-    
-    # 嘗試註冊中文字型
-    if FONT_PATH:
+    font_name = 'Helvetica' # 預設字型
+
+    # --- 在函式內部動態尋找字型，確保每次生成都重新檢查 ---
+    font_path = find_font_path_dynamically()
+
+    if font_path:
         try:
-            # 將找到的路徑註冊為 'MyChineseFont'
-            pdfmetrics.registerFont(TTFont('MyChineseFont', FONT_PATH))
+            pdfmetrics.registerFont(TTFont('MyChineseFont', font_path))
             font_name = 'MyChineseFont'
+            st.sidebar.success(f"✅ PDF 字型載入成功: {os.path.basename(font_path)}")
         except Exception as e:
-            st.error(f"字型載入失敗，PDF 可能無法顯示中文: {e}")
+            st.sidebar.error(f"❌ PDF 字型載入失敗: {e}")
     else:
-        st.warning("⚠️ 系統找不到中文字型檔，PDF 可能會出現黑方塊。")
+        st.sidebar.warning("⚠️ 找不到中文字型，PDF 將使用預設字型。")
+        st.sidebar.info(f"搜尋路徑: {BASE_DIR}")
 
     doc = SimpleDocTemplate(buffer, pagesize=A4)
     elements = []
     styles = getSampleStyleSheet()
-    
-    # 將字型套用到樣式中
+
+    # --- 使用新的樣式名稱，避免與預設樣式衝突 ---
     title_style = ParagraphStyle(
-        'Title', parent=styles['Heading1'], fontName=font_name, fontSize=18, alignment=1, spaceAfter=20
+        'ChineseTitle', parent=styles['Heading1'], fontName=font_name, fontSize=18, alignment=1, spaceAfter=20
     )
     normal_style = ParagraphStyle(
-        'Normal', parent=styles['Normal'], fontName=font_name, fontSize=10
+        'ChineseNormal', parent=styles['Normal'], fontName=font_name, fontSize=10
     )
 
     keys = list(data_dict.keys())
@@ -221,11 +219,14 @@ def generate_merged_pdf(data_dict):
         elements.append(Paragraph(title, title_style))
         elements.append(Paragraph(f"列印時間: {datetime.now().strftime('%Y-%m-%d %H:%M')}", normal_style))
         elements.append(Spacer(1, 10))
-        
+
         table_data = [df.columns.tolist()] + df.values.tolist()
+        # 將 DataFrame 中的所有元素轉為字串，避免非字串類型導致錯誤
+        table_data = [[str(item) for item in row] for row in table_data]
+
         table = Table(table_data)
         table.setStyle(TableStyle([
-            ('FONTNAME', (0, 0), (-1, -1), font_name), # 這裡也必須套用中文字型
+            ('FONTNAME', (0, 0), (-1, -1), font_name),
             ('FONTSIZE', (0, 0), (-1, -1), 10),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
@@ -234,6 +235,7 @@ def generate_merged_pdf(data_dict):
         ]))
         elements.append(table)
         if i < len(keys) - 1: elements.append(PageBreak())
+
     doc.build(elements)
     return buffer.getvalue()
 
@@ -249,7 +251,7 @@ def create_batch_zip(data_dict, file_type="Excel"):
     return zip_buffer.getvalue()
 
 # ==========================================
-# 2. 介面設定
+# 2. 介面設定 (後續程式碼保持不變)
 # ==========================================
 try:
     st.set_page_config(page_title="頂級社團報名系統 V18.34", page_icon="💎", layout="wide")
@@ -264,6 +266,8 @@ with st.sidebar:
     page = st.radio("前往頁面", ["📝 學生報名", "🔍 查詢報名", "🛠️ 管理員後台"])
     st.divider()
     st.caption("Designed with ❤️ via Streamlit")
+
+# ... (以下省略與原檔案相同的程式碼) ...
 
 # ==========================================
 # 3. 彈窗與邏輯
@@ -285,7 +289,7 @@ def confirm_submission(sel_class, sel_seat, name, club):
         limit = config_data["clubs"][club]["limit"]
         current_count = len(current_df[current_df["社團"] == club])
         if current_count >= limit:
-            st.error(f"😭 來晚了一步！該社團剛剛瞬間額滿了。"); return 
+            st.error(f"😭 來晚了一步！該社團剛剛瞬間額滿了。"); return
         new_row = pd.DataFrame({
             "班級": [sel_class], "座號": [sel_seat], "姓名": [name],
             "社團": [club], "報名時間": [get_taiwan_now().strftime('%Y-%m-%d %H:%M:%S')],
@@ -329,7 +333,7 @@ def render_health_bar(limit, current):
     for i in range(limit):
         color = "#22C55E" if i < remain else "#E5E7EB"
         blocks_html += f'<div style="width:8px; height:12px; background-color:{color}; border-radius:2px; margin:1px;"></div>'
-    
+
     container_html = f"""
     <div style="display:flex; flex-wrap:wrap; margin-bottom:5px;">
         {blocks_html}
@@ -426,26 +430,26 @@ if page == "🛠️ 管理員後台":
                     else: st.error("❌ 密碼錯誤")
     else:
         if st.sidebar.button("🚪 管理員登出"): st.session_state.is_admin = False; st.rerun()
-        
+
         tab_monitor, tab_student, tab_config, tab_export = st.tabs([
             "📊 實時看板", "👥 學生管理", "⚙️ 系統設定", "🖨️ 報表輸出"
         ])
-        
+
         with tab_monitor:
             df = load_registrations()
             all_students_df = load_students_with_identity()
-            
+
             if not df.empty:
                 m1, m2, m3 = st.columns(3)
                 m1.metric("已報名人數", f"{len(df)} 人")
                 m2.metric("正取", f"{len(df[df['狀態']=='正取'])} 人")
                 m3.metric("報名率", f"{int(len(df)/len(all_students_df)*100) if not all_students_df.empty else 0} %")
-                
+
                 with st.expander("📊 查看社團報名長條圖", expanded=False):
                     st.bar_chart(df['社團'].value_counts())
 
                 view_tabs = st.tabs(["🏆 依社團", "🏫 依班級", "⚠️ 未選社"])
-                
+
                 with view_tabs[0]:
                     clubs_list = sorted(df["社團"].unique())
                     if clubs_list:
@@ -509,14 +513,14 @@ if page == "🛠️ 管理員後台":
                 c_s1, c_s2 = st.columns([1, 2])
                 with c_s1:
                     sel_admin_cls = st.selectbox("選擇班級", sorted(all_std["班級"].unique()), key="id_cls_sel")
-                
+
                 sub_std = all_std[all_std["班級"] == sel_admin_cls].sort_values(by="座號")
                 col_btn1, col_btn2 = st.columns(2)
                 if col_btn1.button(f"⚡ {sel_admin_cls}班 全設為校隊", use_container_width=True):
                     admin_batch_update_identity(sub_std.to_dict('records'), "校隊學生")
                 if col_btn2.button(f"🔙 {sel_admin_cls}班 全設為一般", use_container_width=True):
                     admin_batch_update_identity(sub_std.to_dict('records'), "一般生")
-                
+
                 sub_std.insert(0, "選取", False)
                 ed_id = st.data_editor(sub_std, hide_index=True, disabled=["班級","姓名","學號"], key="ed_id_table")
                 sel_id = ed_id[ed_id["選取"]].to_dict('records')
@@ -524,7 +528,7 @@ if page == "🛠️ 管理員後台":
                     c_b1, c_b2 = st.columns(2)
                     if c_b1.button("設為校隊", key="btn_team"): admin_batch_update_identity(sel_id, "校隊學生")
                     if c_b2.button("設為一般", key="btn_normal"): admin_batch_update_identity(sel_id, "一般生")
-            
+
             st.divider()
             col_add, col_trans = st.columns(2)
             with col_add:
@@ -569,7 +573,7 @@ if page == "🛠️ 管理員後台":
                     st.write("📋 **匯入社團簡章**")
                     if st.button("🧨 清空社團"): confirm_clear_clubs()
                     f_club = st.file_uploader("上傳 Excel/Word", type=["xlsx", "docx"], key="up_c")
-                    
+
                     if f_club and st.button("📥 開始匯入"):
                         try:
                             count = 0
@@ -598,7 +602,7 @@ if page == "🛠️ 管理員後台":
                                         if val and val.lower() != 'nan': category = val
                                     cats_found.add(category)
                                     name = str(r['社團名稱']).strip()
-                                    if name: 
+                                    if name:
                                         config_data["clubs"][name] = {"limit": limit, "category": category}
                                         count += 1
 
@@ -632,11 +636,11 @@ if page == "🛠️ 管理員後台":
                                             if name:
                                                 config_data["clubs"][name] = {"limit": limit, "category": category}
                                                 count += 1
-                            
+
                             if cats_found: st.toast(f"已偵測類別：{', '.join(cats_found)}")
                             save_config(config_data); st.success(f"成功匯入 {count} 筆！"); time.sleep(1); st.rerun()
                         except Exception as e: st.error(f"匯入錯誤: {e}")
-            
+
             with c_imp2:
                 with st.container(border=True):
                     st.write("👥 **匯入學生名冊**")
@@ -667,21 +671,21 @@ if page == "🛠️ 管理員後台":
 
         with tab_export:
             st.subheader("🖨️ 批次列印與下載中心")
-            
+
             c_type, c_content = st.columns([1, 3])
             with c_type:
                 st.info("選擇格式")
                 fmt = st.radio("格式", ["PDF (合併列印)", "Excel (ZIP壓縮)"], label_visibility="collapsed")
-            
+
             with c_content:
                 tab_dl_cls, tab_dl_club = st.tabs(["🏫 按班級列印", "🏆 按社團列印"])
-                
+
                 with tab_dl_cls:
                     if not df.empty:
                         all_cls = sorted(df["班級"].unique())
                         sel_cls = st.multiselect("選擇班級", all_cls)
                         if st.button("全選班級"): sel_cls = all_cls
-                        
+
                         if sel_cls:
                             if st.button(f"執行輸出 ({len(sel_cls)} 班)"):
                                 data_map = {f"{c}班_名單": df[df["班級"]==c].sort_values("座號")[["班級","座號","姓名","社團"]] for c in sel_cls}
@@ -698,7 +702,7 @@ if page == "🛠️ 管理員後台":
                         all_club = sorted(df["社團"].unique())
                         sel_club = st.multiselect("選擇社團", all_club)
                         if st.button("全選社團"): sel_club = all_club
-                        
+
                         if sel_club:
                             if st.button(f"執行輸出 ({len(sel_club)} 社)"):
                                 data_map = {f"{c}_名單": df[df["社團"]==c].sort_values(["班級","座號"])[["班級","座號","姓名","狀態"]] for c in sel_club}
@@ -706,10 +710,10 @@ if page == "🛠️ 管理員後台":
                                     out = generate_merged_pdf(data_map)
                                     st.download_button("⬇️ 下載 PDF", out, "社團名單.pdf", "application/pdf", type="primary")
                                 else:
-                                    out = create_batch_zip(data_map)
+                                    out = create_batch_zip(data_map, file_type="Excel")
                                     st.download_button("⬇️ 下載 ZIP", out, "社團名單.zip", "application/zip", type="primary")
                     else: st.info("無資料")
-            
+
             st.divider()
             st.caption("👇 原始資料備份")
             dl1, dl2 = st.columns(2)
@@ -726,16 +730,16 @@ elif page == "📝 學生報名":
     if os.path.exists(STUDENT_LIST_FILE):
         std_df = load_students_with_identity()
         all_classes = sorted(std_df["班級"].unique())
-        
+
         st.markdown("<h2 style='text-align: center; color: #1E3A8A;'>📝 學生社團報名</h2>", unsafe_allow_html=True)
-        
+
         with st.container(border=True):
             c_grade, c_class, c_seat = st.columns(3)
             sel_grade = c_grade.selectbox("年級", ["七年級", "八年級", "九年級"])
             prefix = "7" if sel_grade == "七年級" else "8" if sel_grade == "八年級" else "9"
             target_classes = [c for c in all_classes if str(c).startswith(prefix)]
             sel_class = c_class.selectbox("班級", target_classes) if target_classes else None
-            
+
             sel_seat = None
             if sel_class:
                 seats = sorted(std_df[std_df["班級"] == sel_class]["座號"].unique())
@@ -746,9 +750,9 @@ elif page == "📝 學生報名":
             if st.session_state.last_student != current_key:
                 st.session_state.id_verified = False
                 st.session_state.last_student = current_key
-            
+
             row = std_df[(std_df["班級"] == sel_class) & (std_df["座號"] == sel_seat)].iloc[0]
-            
+
             if not st.session_state.id_verified:
                 with st.form("verify"):
                     c_v1, c_v2 = st.columns([3, 1])
@@ -769,7 +773,7 @@ elif page == "📝 學生報名":
 
                 admin_set_identity = row.get("身分", "一般生")
                 is_locked = (admin_set_identity == "校隊學生")
-                
+
                 c_id_info, c_id_sel = st.columns([2, 1])
                 c_id_info.info(f"系統身分：{admin_set_identity}")
                 student_identity = c_id_sel.radio("身分", ["一般生", "校隊學生"], index=1 if is_locked else 0, disabled=is_locked, horizontal=True)
@@ -786,7 +790,7 @@ elif page == "📝 學生報名":
                     is_team = "校隊" in str(cfg.get("category", ""))
                     if student_identity == "校隊學生" and not is_team: continue
                     clubs_to_show.append(c)
-                
+
                 for i in range(0, len(clubs_to_show), 2):
                     cols = st.columns(2)
                     for j in range(2):
