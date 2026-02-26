@@ -59,35 +59,43 @@ IMAGES_DIR = os.path.join(BASE_DIR, "club_images")
 if not os.path.exists(IMAGES_DIR):
     os.makedirs(IMAGES_DIR)
 
-# --- [核彈級修復 V2] 移除 cache 裝飾器，背景靜默下載 ---
+# --- [核彈級修復 V3] 終極防彈字型雷達 ---
 def get_chinese_font_path():
-    """尋找或自動下載中文字型 (安靜模式，避免雲端崩潰)"""
-    cloud_font_name = "cloud_chinese_font.ttf"
+    """尋找或自動下載中文字型 (支援 TTC 解析與防空檔機制)"""
+    cloud_font_name = "TaipeiSans.ttf" # 使用穩定且無版權問題的台北黑體
     cloud_font_path = os.path.join(BASE_DIR, cloud_font_name)
 
-    # 1. 檢查本機或專案內是否已經有字型
+    # 1. 檢查本機或專案內是否已經有字型 (確保檔案大於 500KB，排除損壞的空檔)
     paths_to_try = [
         cloud_font_path,
         os.path.join(BASE_DIR, "msjh.ttc"),
+        os.path.join(BASE_DIR, "msjh.ttf"),
         os.path.join(BASE_DIR, "kaiu.ttf"),
-        "C:\\Windows\\Fonts\\kaiu.ttf",  # Windows 標楷體
-        "C:\\Windows\\Fonts\\msjh.ttc"   # Windows 微軟正黑體
+        "C:\\Windows\\Fonts\\msjh.ttc",
+        "C:\\Windows\\Fonts\\kaiu.ttf"
     ]
     
     for p in paths_to_try:
-        if os.path.exists(p):
+        if os.path.exists(p) and os.path.getsize(p) > 500000:
             return p
 
-    # 2. 如果都找不到，在背景默默下載
+    # 2. 如果都找不到，在背景安靜下載開源字型
     try:
-        font_url = "https://raw.githubusercontent.com/hustcc/canvas-nest.js/master/test/simhei.ttf"
-        urllib.request.urlretrieve(font_url, cloud_font_path)
-        return cloud_font_path
+        # 下載 Github 上的開源台北黑體
+        url = "https://raw.githubusercontent.com/Kanjou/Taipei-Sans-TC/master/TaipeiSansTCBeta-Regular.ttf"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req) as response, open(cloud_font_path, 'wb') as out_file:
+            out_file.write(response.read())
+        
+        # 再次檢查是否下載成功
+        if os.path.getsize(cloud_font_path) > 500000:
+            return cloud_font_path
     except Exception as e:
         print(f"字型下載失敗: {e}")
-        return None
+    
+    return None
 
-# 取得全域字型路徑 (啟動時只會執行一次)
+# 取得全域字型路徑
 FONT_PATH = get_chinese_font_path()
 
 # ------------------------------------------
@@ -100,6 +108,7 @@ def generate_text_image(text):
     img = Image.new('RGB', (width, height), color=background_color)
     draw = ImageDraw.Draw(img)
     try:
+        # Pillow 套件可以直接吃 ttc，這部分不影響
         if FONT_PATH:
             font = ImageFont.truetype(FONT_PATH, 24)
         else:
@@ -197,7 +206,7 @@ def load_students_with_identity():
     df["身分"] = df["身分"].fillna("一般生")
     return df
 
-# --- [修改重點] PDF 生成 ---
+# --- [修改重點] PDF 生成 (完美破解 TTC 與黑方塊問題) ---
 def generate_merged_pdf(data_dict):
     buffer = io.BytesIO()
     
@@ -205,10 +214,15 @@ def generate_merged_pdf(data_dict):
     
     if FONT_PATH and os.path.exists(FONT_PATH):
         try:
-            pdfmetrics.registerFont(TTFont('MyChineseFont', FONT_PATH))
+            # ReportLab 非常挑剔，如果是 ttc 檔，必須加上 subfontIndex=0 才能成功讀取
+            if FONT_PATH.lower().endswith('.ttc'):
+                pdfmetrics.registerFont(TTFont('MyChineseFont', FONT_PATH, subfontIndex=0))
+            else:
+                pdfmetrics.registerFont(TTFont('MyChineseFont', FONT_PATH))
             font_name = 'MyChineseFont'
         except Exception as e:
-            st.error(f"字型載入失敗: {e}")
+            # 萬一載入失敗，在背景印出錯誤，系統會安全退回 Helvetica
+            print(f"字型載入失敗: {e}")
     
     doc = SimpleDocTemplate(buffer, pagesize=A4)
     elements = []
@@ -262,7 +276,7 @@ def create_batch_zip(data_dict, file_type="Excel"):
 # 2. 介面設定
 # ==========================================
 try:
-    st.set_page_config(page_title="頂級社團報名系統 V18.36", page_icon="💎", layout="wide")
+    st.set_page_config(page_title="頂級社團報名系統 V18.37", page_icon="💎", layout="wide")
 except:
     pass
 
@@ -679,7 +693,6 @@ if page == "🛠️ 管理員後台":
             c_type, c_content = st.columns([1, 3])
             with c_type:
                 st.info("選擇格式")
-                # 如果找不到字型，會自動去抓，所以可以直接開放
                 fmt = st.radio("格式", ["PDF (合併列印)", "Excel (ZIP壓縮)"], label_visibility="collapsed")
             
             with c_content:
