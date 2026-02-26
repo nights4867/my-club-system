@@ -9,6 +9,7 @@ import pandas as pd
 import zipfile 
 from datetime import datetime
 import pytz 
+import urllib.request # [新增] 用於自動下載網路字型
 
 # ==========================================
 # 0. 系統設定 (雲端相容模式)
@@ -58,23 +59,38 @@ IMAGES_DIR = os.path.join(BASE_DIR, "club_images")
 if not os.path.exists(IMAGES_DIR):
     os.makedirs(IMAGES_DIR)
 
-# --- [修改重點 1] 超級字型雷達 (解決黑方塊問題) ---
+# --- [核彈級修復] 自動下載中文字型功能 ---
+@st.cache_resource
 def get_chinese_font_path():
-    """尋找電腦或專案中可用的中文字型"""
-    # 建立一個清單，優先順序：專案資料夾內 > Windows 標楷體 > Windows 微軟正黑體
+    """尋找或自動下載中文字型 (專治雲端黑方塊)"""
+    cloud_font_name = "cloud_chinese_font.ttf"
+    cloud_font_path = os.path.join(BASE_DIR, cloud_font_name)
+
+    # 1. 檢查本機或專案內是否已經有字型
     paths_to_try = [
-        os.path.join(BASE_DIR, "kaiu.ttf"),      # 雲端備用：自帶標楷體
-        os.path.join(BASE_DIR, "msjh.ttc"),      # 雲端備用：自帶正黑體
-        "C:\\Windows\\Fonts\\kaiu.ttf",          # 本機 Windows 標楷體 (純TTF，ReportLab 最愛)
-        "C:\\Windows\\Fonts\\msjh.ttc",          # 本機 Windows 微軟正黑體
-        "C:\\Windows\\Fonts\\simhei.ttf"         # 本機 Windows 黑體
+        cloud_font_path,
+        os.path.join(BASE_DIR, "msjh.ttc"),
+        os.path.join(BASE_DIR, "kaiu.ttf"),
+        "C:\\Windows\\Fonts\\kaiu.ttf",  # Windows 標楷體
+        "C:\\Windows\\Fonts\\msjh.ttc"   # Windows 微軟正黑體
     ]
     for p in paths_to_try:
         if os.path.exists(p):
             return p
-    return None
 
-# 全域字型路徑
+    # 2. 如果都找不到 (代表在雲端且沒上傳)，自動從穩定的開源庫下載黑體字型
+    try:
+        st.toast("☁️ 雲端首次執行：正在自動下載中文字型檔，請稍候幾秒鐘...", icon="⏳")
+        # 提供一個穩定的開源中文字型 (SimHei TTF) 下載連結
+        font_url = "https://raw.githubusercontent.com/hustcc/canvas-nest.js/master/test/simhei.ttf"
+        urllib.request.urlretrieve(font_url, cloud_font_path)
+        st.toast("✅ 字型下載完成！PDF 將可正常顯示中文。", icon="🎉")
+        return cloud_font_path
+    except Exception as e:
+        print(f"字型下載失敗: {e}")
+        return None
+
+# 取得全域字型路徑
 FONT_PATH = get_chinese_font_path()
 
 # ------------------------------------------
@@ -146,7 +162,6 @@ def load_config():
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            # 確保欄位存在
             for c in data.get("clubs", {}):
                 if "category" not in data["clubs"][c]: data["clubs"][c]["category"] = "綜合"
             if "start_time" not in data: data["start_time"] = "2026-02-09 08:00:00"
@@ -185,28 +200,25 @@ def load_students_with_identity():
     df["身分"] = df["身分"].fillna("一般生")
     return df
 
-# --- [修改重點 2] PDF 生成 (套用超級字型雷達) ---
+# --- [修改重點] PDF 生成 (套用下載好的中文字型) ---
 def generate_merged_pdf(data_dict):
     buffer = io.BytesIO()
     
-    font_name = 'Helvetica' # 預設為不支援中文的安全牌
+    font_name = 'Helvetica' # 預設安全牌
     
-    # 嘗試註冊中文字型
-    if FONT_PATH:
+    if FONT_PATH and os.path.exists(FONT_PATH):
         try:
-            # 將找到的路徑註冊為 'MyChineseFont'
+            # 註冊中文字型給 PDF 引擎使用
             pdfmetrics.registerFont(TTFont('MyChineseFont', FONT_PATH))
             font_name = 'MyChineseFont'
         except Exception as e:
-            st.error(f"字型載入失敗，PDF 可能無法顯示中文: {e}")
-    else:
-        st.warning("⚠️ 系統找不到中文字型檔，PDF 可能會出現黑方塊。")
-
+            st.error(f"字型載入失敗: {e}")
+    
     doc = SimpleDocTemplate(buffer, pagesize=A4)
     elements = []
     styles = getSampleStyleSheet()
     
-    # 將字型套用到樣式中
+    # 建立標題與內文樣式
     title_style = ParagraphStyle(
         'Title', parent=styles['Heading1'], fontName=font_name, fontSize=18, alignment=1, spaceAfter=20
     )
@@ -223,8 +235,10 @@ def generate_merged_pdf(data_dict):
         
         table_data = [df.columns.tolist()] + df.values.tolist()
         table = Table(table_data)
+        
+        # 設定表格樣式，包含字體
         table.setStyle(TableStyle([
-            ('FONTNAME', (0, 0), (-1, -1), font_name), # 這裡也必須套用中文字型
+            ('FONTNAME', (0, 0), (-1, -1), font_name), # 確保表格內文使用中文字型
             ('FONTSIZE', (0, 0), (-1, -1), 10),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
@@ -232,7 +246,10 @@ def generate_merged_pdf(data_dict):
             ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
         ]))
         elements.append(table)
-        if i < len(keys) - 1: elements.append(PageBreak())
+        
+        if i < len(keys) - 1:
+            elements.append(PageBreak())
+            
     doc.build(elements)
     return buffer.getvalue()
 
@@ -251,7 +268,7 @@ def create_batch_zip(data_dict, file_type="Excel"):
 # 2. 介面設定
 # ==========================================
 try:
-    st.set_page_config(page_title="頂級社團報名系統 V18.34", page_icon="💎", layout="wide")
+    st.set_page_config(page_title="頂級社團報名系統 V18.35", page_icon="💎", layout="wide")
 except:
     pass
 
@@ -670,7 +687,12 @@ if page == "🛠️ 管理員後台":
             c_type, c_content = st.columns([1, 3])
             with c_type:
                 st.info("選擇格式")
-                fmt = st.radio("格式", ["PDF (合併列印)", "Excel (ZIP壓縮)"], label_visibility="collapsed")
+                # 解決格式選擇的問題，如果沒找到字型就隱藏 PDF 避免錯誤
+                if FONT_PATH is None:
+                    st.error("⚠️ 雲端缺少字型，已禁用 PDF 下載")
+                    fmt = st.radio("格式", ["Excel (ZIP壓縮)"], label_visibility="collapsed")
+                else:
+                    fmt = st.radio("格式", ["PDF (合併列印)", "Excel (ZIP壓縮)"], label_visibility="collapsed")
             
             with c_content:
                 tab_dl_cls, tab_dl_club = st.tabs(["🏫 按班級列印", "🏆 按社團列印"])
