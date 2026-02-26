@@ -32,12 +32,16 @@ try:
     from PIL import Image, ImageDraw, ImageFont
     import openpyxl
 
-    # PDF 相關 (改用 fpdf2，徹底解決中文亂碼)
-    from fpdf import FPDF
+    # Word 相關
+    from docx.shared import Pt
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
 
 except ImportError as e:
     st.error(f"⚠️ 系統缺少必要套件：{e}")
-    st.info("請確認 requirements.txt 包含：python-docx, Pillow, openpyxl, fpdf2")
+    st.info("請確認 requirements.txt 包含：python-docx, Pillow, openpyxl")
     st.stop()
 
 # ==========================================
@@ -179,68 +183,76 @@ def load_students_with_identity():
     df["身分"] = df["身分"].fillna("一般生")
     return df
 
-# --- [修正] PDF 生成函式 (改用 fpdf2，徹底解決中文亂碼) ---
-def generate_merged_pdf(data_dict):
-    font_path = FONT_PATH
+# --- [Word 生成函式] ---
+def generate_merged_docx(data_dict):
+    doc = Document()
 
-    pdf = FPDF(orientation='P', unit='mm', format='A4')
-
-    # 如果找到中文字型就使用，否則用預設字型
-    use_chinese = False
-    if font_path:
-        try:
-            pdf.add_font('ChineseFont', '', font_path)
-            use_chinese = True
-        except Exception as e:
-            st.sidebar.error(f"❌ PDF 字型載入失敗: {e}")
+    # 設定預設字型為標楷體
+    style = doc.styles['Normal']
+    style.font.name = '標楷體'
+    style._element.rPr.rFonts.set(qn('w:eastAsia'), '標楷體')
+    style.font.size = Pt(12)
 
     keys = list(data_dict.keys())
     for i, title in enumerate(keys):
         df = data_dict[title]
-        pdf.add_page()
 
         # 標題
-        if use_chinese:
-            pdf.set_font('ChineseFont', '', 18)
-        else:
-            pdf.set_font('Helvetica', 'B', 18)
-        pdf.cell(0, 15, title, new_x="LMARGIN", new_y="NEXT", align='C')
-        pdf.ln(5)
+        title_para = doc.add_paragraph()
+        title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        title_run = title_para.add_run(title)
+        title_run.font.size = Pt(18)
+        title_run.font.bold = True
+        title_run.font.name = '標楷體'
+        title_run._element.rPr.rFonts.set(qn('w:eastAsia'), '標楷體')
 
         # 列印時間
-        if use_chinese:
-            pdf.set_font('ChineseFont', '', 10)
-        else:
-            pdf.set_font('Helvetica', '', 10)
-        pdf.cell(0, 8, f"列印時間: {datetime.now().strftime('%Y-%m-%d %H:%M')}", new_x="LMARGIN", new_y="NEXT")
-        pdf.ln(3)
+        time_para = doc.add_paragraph()
+        time_run = time_para.add_run(f"列印時間: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        time_run.font.size = Pt(10)
+        time_run.font.name = '標楷體'
+        time_run._element.rPr.rFonts.set(qn('w:eastAsia'), '標楷體')
 
         # 表格
-        cols = df.columns.tolist()
-        page_width = pdf.w - 2 * pdf.l_margin
-        col_widths = [page_width / len(cols)] * len(cols)
+        table = doc.add_table(rows=1 + len(df), cols=len(df.columns))
+        table.style = 'Table Grid'
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
 
         # 表頭
-        if use_chinese:
-            pdf.set_font('ChineseFont', '', 10)
-        else:
-            pdf.set_font('Helvetica', 'B', 10)
-        pdf.set_fill_color(220, 220, 220)
-        for j, col in enumerate(cols):
-            pdf.cell(col_widths[j], 8, str(col), border=1, align='C', fill=True)
-        pdf.ln()
+        for j, col_name in enumerate(df.columns):
+            cell = table.rows[0].cells[j]
+            cell.text = ''
+            p = cell.paragraphs[0]
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = p.add_run(str(col_name))
+            run.font.bold = True
+            run.font.size = Pt(11)
+            run.font.name = '標楷體'
+            run._element.rPr.rFonts.set(qn('w:eastAsia'), '標楷體')
+            # 表頭灰色背景
+            shading = OxmlElement('w:shd')
+            shading.set(qn('w:fill'), 'D9D9D9')
+            cell._element.get_or_add_tcPr().append(shading)
 
         # 資料列
-        if use_chinese:
-            pdf.set_font('ChineseFont', '', 10)
-        else:
-            pdf.set_font('Helvetica', '', 10)
-        for _, row in df.iterrows():
-            for j, col in enumerate(cols):
-                pdf.cell(col_widths[j], 8, str(row[col]), border=1, align='C')
-            pdf.ln()
+        for row_idx, (_, row) in enumerate(df.iterrows()):
+            for col_idx, item in enumerate(row):
+                cell = table.rows[row_idx + 1].cells[col_idx]
+                cell.text = ''
+                p = cell.paragraphs[0]
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                run = p.add_run(str(item))
+                run.font.size = Pt(11)
+                run.font.name = '標楷體'
+                run._element.rPr.rFonts.set(qn('w:eastAsia'), '標楷體')
 
-    return bytes(pdf.output())
+        # 分頁符
+        if i < len(keys) - 1:
+            doc.add_page_break()
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
 
 def create_batch_zip(data_dict, file_type="Excel"):
     zip_buffer = io.BytesIO()
@@ -676,7 +688,7 @@ if page == "🛠️ 管理員後台":
             c_type, c_content = st.columns([1, 3])
             with c_type:
                 st.info("選擇格式")
-                fmt = st.radio("格式", ["PDF (合併列印)", "Excel (ZIP壓縮)"], label_visibility="collapsed")
+                fmt = st.radio("格式", ["Word (合併列印)", "Excel (ZIP壓縮)"], label_visibility="collapsed")
 
             with c_content:
                 tab_dl_cls, tab_dl_club = st.tabs(["🏫 按班級列印", "🏆 按社團列印"])
@@ -690,9 +702,9 @@ if page == "🛠️ 管理員後台":
                         if sel_cls:
                             if st.button(f"執行輸出 ({len(sel_cls)} 班)"):
                                 data_map = {f"{c}班_名單": df[df["班級"]==c].sort_values("座號")[["班級","座號","姓名","社團"]] for c in sel_cls}
-                                if "PDF" in fmt:
-                                    out = generate_merged_pdf(data_map)
-                                    st.download_button("⬇️ 下載 PDF", out, "班級名單.pdf", "application/pdf", type="primary")
+                                if "Word" in fmt:
+                                    out = generate_merged_docx(data_map)
+                                    st.download_button("⬇️ 下載 Word", out, "班級名單.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", type="primary")
                                 else:
                                     out = create_batch_zip(data_map)
                                     st.download_button("⬇️ 下載 ZIP", out, "班級名單.zip", "application/zip", type="primary")
@@ -707,9 +719,9 @@ if page == "🛠️ 管理員後台":
                         if sel_club:
                             if st.button(f"執行輸出 ({len(sel_club)} 社)"):
                                 data_map = {f"{c}_名單": df[df["社團"]==c].sort_values(["班級","座號"])[["班級","座號","姓名","狀態"]] for c in sel_club}
-                                if "PDF" in fmt:
-                                    out = generate_merged_pdf(data_map)
-                                    st.download_button("⬇️ 下載 PDF", out, "社團名單.pdf", "application/pdf", type="primary")
+                                if "Word" in fmt:
+                                    out = generate_merged_docx(data_map)
+                                    st.download_button("⬇️ 下載 Word", out, "社團名單.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", type="primary")
                                 else:
                                     out = create_batch_zip(data_map, file_type="Excel")
                                     st.download_button("⬇️ 下載 ZIP", out, "社團名單.zip", "application/zip", type="primary")
@@ -821,4 +833,3 @@ elif page == "🔍 查詢報名":
         res = reg_df[reg_df["姓名"] == q]
         if not res.empty: st.table(res[["班級", "座號", "社團", "狀態"]])
         else: st.warning("查無資料")
-
