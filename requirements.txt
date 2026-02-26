@@ -3,4 +3,4 @@ pandas
 python-docx
 openpyxl
 Pillow
-reportlab
+fpdf2
