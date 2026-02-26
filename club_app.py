@@ -55,13 +55,27 @@ REG_FILE = os.path.join(BASE_DIR, "club_registrations.csv")
 STUDENT_LIST_FILE = os.path.join(BASE_DIR, "students.xlsx")
 IMAGES_DIR = os.path.join(BASE_DIR, "club_images")
 
-# 字型路徑智慧判斷 (解決雲端中文亂碼)
-FONT_PATH = os.path.join(BASE_DIR, "msjh.ttc")
-if not os.path.exists(FONT_PATH):
-    FONT_PATH = "C:\\Windows\\Fonts\\msjh.ttc"
-
 if not os.path.exists(IMAGES_DIR):
     os.makedirs(IMAGES_DIR)
+
+# --- [修改重點 1] 超級字型雷達 (解決黑方塊問題) ---
+def get_chinese_font_path():
+    """尋找電腦或專案中可用的中文字型"""
+    # 建立一個清單，優先順序：專案資料夾內 > Windows 標楷體 > Windows 微軟正黑體
+    paths_to_try = [
+        os.path.join(BASE_DIR, "kaiu.ttf"),      # 雲端備用：自帶標楷體
+        os.path.join(BASE_DIR, "msjh.ttc"),      # 雲端備用：自帶正黑體
+        "C:\\Windows\\Fonts\\kaiu.ttf",          # 本機 Windows 標楷體 (純TTF，ReportLab 最愛)
+        "C:\\Windows\\Fonts\\msjh.ttc",          # 本機 Windows 微軟正黑體
+        "C:\\Windows\\Fonts\\simhei.ttf"         # 本機 Windows 黑體
+    ]
+    for p in paths_to_try:
+        if os.path.exists(p):
+            return p
+    return None
+
+# 全域字型路徑
+FONT_PATH = get_chinese_font_path()
 
 # ------------------------------------------
 # [核心 1] 社團名稱轉圖片
@@ -73,7 +87,10 @@ def generate_text_image(text):
     img = Image.new('RGB', (width, height), color=background_color)
     draw = ImageDraw.Draw(img)
     try:
-        font = ImageFont.truetype(FONT_PATH, 24) if os.path.exists(FONT_PATH) else ImageFont.load_default()
+        if FONT_PATH:
+            font = ImageFont.truetype(FONT_PATH, 24)
+        else:
+            font = ImageFont.load_default()
     except: font = ImageFont.load_default()
     
     bbox = draw.textbbox((0, 0), text, font=font)
@@ -94,7 +111,7 @@ def generate_step_image(num, text):
     img = Image.new('RGB', (width, height), color=bg_color)
     draw = ImageDraw.Draw(img)
     try:
-        if os.path.exists(FONT_PATH):
+        if FONT_PATH:
             font_num = ImageFont.truetype(FONT_PATH, 22) 
             font_text = ImageFont.truetype(FONT_PATH, 24) 
         else:
@@ -129,6 +146,7 @@ def load_config():
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
+            # 確保欄位存在
             for c in data.get("clubs", {}):
                 if "category" not in data["clubs"][c]: data["clubs"][c]["category"] = "綜合"
             if "start_time" not in data: data["start_time"] = "2026-02-09 08:00:00"
@@ -167,22 +185,34 @@ def load_students_with_identity():
     df["身分"] = df["身分"].fillna("一般生")
     return df
 
-# --- [PDF 生成] ---
+# --- [修改重點 2] PDF 生成 (套用超級字型雷達) ---
 def generate_merged_pdf(data_dict):
     buffer = io.BytesIO()
-    try:
-        if os.path.exists(FONT_PATH):
-            pdfmetrics.registerFont(TTFont('MSJH', FONT_PATH))
-            font_name = 'MSJH'
-        else:
-            font_name = 'Helvetica'
-    except: font_name = 'Helvetica'
     
+    font_name = 'Helvetica' # 預設為不支援中文的安全牌
+    
+    # 嘗試註冊中文字型
+    if FONT_PATH:
+        try:
+            # 將找到的路徑註冊為 'MyChineseFont'
+            pdfmetrics.registerFont(TTFont('MyChineseFont', FONT_PATH))
+            font_name = 'MyChineseFont'
+        except Exception as e:
+            st.error(f"字型載入失敗，PDF 可能無法顯示中文: {e}")
+    else:
+        st.warning("⚠️ 系統找不到中文字型檔，PDF 可能會出現黑方塊。")
+
     doc = SimpleDocTemplate(buffer, pagesize=A4)
     elements = []
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontName=font_name, fontSize=18, alignment=1, spaceAfter=20)
-    normal_style = ParagraphStyle('Normal', parent=styles['Normal'], fontName=font_name, fontSize=10)
+    
+    # 將字型套用到樣式中
+    title_style = ParagraphStyle(
+        'Title', parent=styles['Heading1'], fontName=font_name, fontSize=18, alignment=1, spaceAfter=20
+    )
+    normal_style = ParagraphStyle(
+        'Normal', parent=styles['Normal'], fontName=font_name, fontSize=10
+    )
 
     keys = list(data_dict.keys())
     for i, title in enumerate(keys):
@@ -190,10 +220,11 @@ def generate_merged_pdf(data_dict):
         elements.append(Paragraph(title, title_style))
         elements.append(Paragraph(f"列印時間: {datetime.now().strftime('%Y-%m-%d %H:%M')}", normal_style))
         elements.append(Spacer(1, 10))
+        
         table_data = [df.columns.tolist()] + df.values.tolist()
         table = Table(table_data)
         table.setStyle(TableStyle([
-            ('FONTNAME', (0, 0), (-1, -1), font_name),
+            ('FONTNAME', (0, 0), (-1, -1), font_name), # 這裡也必須套用中文字型
             ('FONTSIZE', (0, 0), (-1, -1), 10),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
@@ -220,7 +251,7 @@ def create_batch_zip(data_dict, file_type="Excel"):
 # 2. 介面設定
 # ==========================================
 try:
-    st.set_page_config(page_title="頂級社團報名系統 V18.33", page_icon="💎", layout="wide")
+    st.set_page_config(page_title="頂級社團報名系統 V18.34", page_icon="💎", layout="wide")
 except:
     pass
 
@@ -752,12 +783,7 @@ elif page == "📝 學生報名":
                 clubs_to_show = []
                 for c, cfg in config_data["clubs"].items():
                     is_team = "校隊" in str(cfg.get("category", ""))
-                    
-                    # --- [修改重點] 拿掉一般生不能選校隊的限制 ---
-                    if student_identity == "校隊學生" and not is_team:
-                        continue 
-                    # (移除了 general student blocking logic)
-
+                    if student_identity == "校隊學生" and not is_team: continue
                     clubs_to_show.append(c)
                 
                 for i in range(0, len(clubs_to_show), 2):
