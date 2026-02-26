@@ -32,18 +32,12 @@ try:
     from PIL import Image, ImageDraw, ImageFont
     import openpyxl
 
-    # PDF 相關
-    from reportlab.pdfgen import canvas
-    from reportlab.lib.pagesizes import A4
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.ttfonts import TTFont
-    from reportlab.lib import colors
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    # PDF 相關 (改用 fpdf2，徹底解決中文亂碼)
+    from fpdf import FPDF
 
 except ImportError as e:
     st.error(f"⚠️ 系統缺少必要套件：{e}")
-    st.info("請確認 requirements.txt 包含：python-docx, Pillow, openpyxl, reportlab")
+    st.info("請確認 requirements.txt 包含：python-docx, Pillow, openpyxl, fpdf2")
     st.stop()
 
 # ==========================================
@@ -58,25 +52,28 @@ IMAGES_DIR = os.path.join(BASE_DIR, "club_images")
 if not os.path.exists(IMAGES_DIR):
     os.makedirs(IMAGES_DIR)
 
-# --- [修改] 移除全域 FONT_PATH，改為在函式內動態尋找 ---
-
-def find_font_path_dynamically():
-    """在函式執行當下動態尋找字型，更穩健"""
-    font_search_paths = [
+# --- 字型路徑搜尋 ---
+def get_chinese_font_path():
+    """尋找電腦或專案中可用的中文字型"""
+    paths_to_try = [
         os.path.join(BASE_DIR, "custom_font.ttf"),
         os.path.join(os.getcwd(), "custom_font.ttf"),
         "custom_font.ttf",
         os.path.join(BASE_DIR, "kaiu.ttf"),
         "C:\\Windows\\Fonts\\kaiu.ttf",
         "C:\\Windows\\Fonts\\msjh.ttc",
+        "C:\\Windows\\Fonts\\simhei.ttf"
     ]
-    for fp in font_search_paths:
-        if os.path.exists(fp) and os.path.getsize(fp) > 0:
-            return fp
+    for p in paths_to_try:
+        if os.path.exists(p) and os.path.getsize(p) > 0:
+            return p
     return None
 
+# 全域字型路徑
+FONT_PATH = get_chinese_font_path()
+
 # ------------------------------------------
-# [核心 1] 社團名稱轉圖片 (已修改)
+# [核心 1] 社團名稱轉圖片
 # ------------------------------------------
 def generate_text_image(text):
     width, height = 400, 45
@@ -84,13 +81,12 @@ def generate_text_image(text):
     text_color = (30, 58, 138)
     img = Image.new('RGB', (width, height), color=background_color)
     draw = ImageDraw.Draw(img)
-    font = ImageFont.load_default() # 預設字型
     try:
-        font_path = find_font_path_dynamically()
-        if font_path:
-            font = ImageFont.truetype(font_path, 24)
-    except Exception as e:
-        st.sidebar.error(f"圖片字型錯誤: {e}")
+        if FONT_PATH:
+            font = ImageFont.truetype(FONT_PATH, 24)
+        else:
+            font = ImageFont.load_default()
+    except: font = ImageFont.load_default()
 
     bbox = draw.textbbox((0, 0), text, font=font)
     text_h = bbox[3] - bbox[1]
@@ -100,7 +96,7 @@ def generate_text_image(text):
     return img_byte_arr.getvalue()
 
 # ------------------------------------------
-# [核心 2] 步驟標題轉圖片 (已修改)
+# [核心 2] 步驟標題轉圖片
 # ------------------------------------------
 def generate_step_image(num, text):
     width, height = 350, 40
@@ -109,15 +105,16 @@ def generate_step_image(num, text):
     text_color = (50, 50, 50)
     img = Image.new('RGB', (width, height), color=bg_color)
     draw = ImageDraw.Draw(img)
-    font_num = ImageFont.load_default()
-    font_text = ImageFont.load_default()
     try:
-        font_path = find_font_path_dynamically()
-        if font_path:
-            font_num = ImageFont.truetype(font_path, 22)
-            font_text = ImageFont.truetype(font_path, 24)
-    except Exception as e:
-        st.sidebar.error(f"步驟圖字型錯誤: {e}")
+        if FONT_PATH:
+            font_num = ImageFont.truetype(FONT_PATH, 22)
+            font_text = ImageFont.truetype(FONT_PATH, 24)
+        else:
+            font_num = ImageFont.load_default()
+            font_text = ImageFont.load_default()
+    except:
+        font_num = ImageFont.load_default()
+        font_text = ImageFont.load_default()
 
     box_size = 32
     box_x, box_y = 0, (height - box_size) // 2
@@ -182,62 +179,68 @@ def load_students_with_identity():
     df["身分"] = df["身分"].fillna("一般生")
     return df
 
-# --- [最終修正] PDF 生成函式 ---
+# --- [修正] PDF 生成函式 (改用 fpdf2，徹底解決中文亂碼) ---
 def generate_merged_pdf(data_dict):
-    buffer = io.BytesIO()
-    font_name = 'Helvetica' # 預設字型
+    font_path = FONT_PATH
 
-    # --- 在函式內部動態尋找字型，確保每次生成都重新檢查 ---
-    font_path = find_font_path_dynamically()
+    pdf = FPDF(orientation='P', unit='mm', format='A4')
 
+    # 如果找到中文字型就使用，否則用預設字型
+    use_chinese = False
     if font_path:
         try:
-            pdfmetrics.registerFont(TTFont('MyChineseFont', font_path))
-            font_name = 'MyChineseFont'
-            st.sidebar.success(f"✅ PDF 字型載入成功: {os.path.basename(font_path)}")
+            pdf.add_font('ChineseFont', '', font_path)
+            use_chinese = True
         except Exception as e:
             st.sidebar.error(f"❌ PDF 字型載入失敗: {e}")
-    else:
-        st.sidebar.warning("⚠️ 找不到中文字型，PDF 將使用預設字型。")
-        st.sidebar.info(f"搜尋路徑: {BASE_DIR}")
-
-    doc = SimpleDocTemplate(buffer, pagesize=A4)
-    elements = []
-    styles = getSampleStyleSheet()
-
-    # --- 使用新的樣式名稱，避免與預設樣式衝突 ---
-    title_style = ParagraphStyle(
-        'ChineseTitle', parent=styles['Heading1'], fontName=font_name, fontSize=18, alignment=1, spaceAfter=20
-    )
-    normal_style = ParagraphStyle(
-        'ChineseNormal', parent=styles['Normal'], fontName=font_name, fontSize=10
-    )
 
     keys = list(data_dict.keys())
     for i, title in enumerate(keys):
         df = data_dict[title]
-        elements.append(Paragraph(title, title_style))
-        elements.append(Paragraph(f"列印時間: {datetime.now().strftime('%Y-%m-%d %H:%M')}", normal_style))
-        elements.append(Spacer(1, 10))
+        pdf.add_page()
 
-        table_data = [df.columns.tolist()] + df.values.tolist()
-        # 將 DataFrame 中的所有元素轉為字串，避免非字串類型導致錯誤
-        table_data = [[str(item) for item in row] for row in table_data]
+        # 標題
+        if use_chinese:
+            pdf.set_font('ChineseFont', '', 18)
+        else:
+            pdf.set_font('Helvetica', 'B', 18)
+        pdf.cell(0, 15, title, new_x="LMARGIN", new_y="NEXT", align='C')
+        pdf.ln(5)
 
-        table = Table(table_data)
-        table.setStyle(TableStyle([
-            ('FONTNAME', (0, 0), (-1, -1), font_name),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
-            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
-        ]))
-        elements.append(table)
-        if i < len(keys) - 1: elements.append(PageBreak())
+        # 列印時間
+        if use_chinese:
+            pdf.set_font('ChineseFont', '', 10)
+        else:
+            pdf.set_font('Helvetica', '', 10)
+        pdf.cell(0, 8, f"列印時間: {datetime.now().strftime('%Y-%m-%d %H:%M')}", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(3)
 
-    doc.build(elements)
-    return buffer.getvalue()
+        # 表格
+        cols = df.columns.tolist()
+        page_width = pdf.w - 2 * pdf.l_margin
+        col_widths = [page_width / len(cols)] * len(cols)
+
+        # 表頭
+        if use_chinese:
+            pdf.set_font('ChineseFont', '', 10)
+        else:
+            pdf.set_font('Helvetica', 'B', 10)
+        pdf.set_fill_color(220, 220, 220)
+        for j, col in enumerate(cols):
+            pdf.cell(col_widths[j], 8, str(col), border=1, align='C', fill=True)
+        pdf.ln()
+
+        # 資料列
+        if use_chinese:
+            pdf.set_font('ChineseFont', '', 10)
+        else:
+            pdf.set_font('Helvetica', '', 10)
+        for _, row in df.iterrows():
+            for j, col in enumerate(cols):
+                pdf.cell(col_widths[j], 8, str(row[col]), border=1, align='C')
+            pdf.ln()
+
+    return bytes(pdf.output())
 
 def create_batch_zip(data_dict, file_type="Excel"):
     zip_buffer = io.BytesIO()
@@ -251,7 +254,7 @@ def create_batch_zip(data_dict, file_type="Excel"):
     return zip_buffer.getvalue()
 
 # ==========================================
-# 2. 介面設定 (後續程式碼保持不變)
+# 2. 介面設定
 # ==========================================
 try:
     st.set_page_config(page_title="頂級社團報名系統 V18.34", page_icon="💎", layout="wide")
@@ -266,8 +269,6 @@ with st.sidebar:
     page = st.radio("前往頁面", ["📝 學生報名", "🔍 查詢報名", "🛠️ 管理員後台"])
     st.divider()
     st.caption("Designed with ❤️ via Streamlit")
-
-# ... (以下省略與原檔案相同的程式碼) ...
 
 # ==========================================
 # 3. 彈窗與邏輯
